@@ -99,7 +99,9 @@ projectRoutes.put('/:id', async (c) => {
   values.push(id);
 
   await c.env.DB.prepare(`UPDATE projects SET ${fields.join(', ')} WHERE id = ?`).bind(...values).run();
-  const updated = await c.env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(id).first();
+  const updated = await c.env.DB.prepare(
+    `SELECT p.*, u.name as supervisor_name FROM projects p LEFT JOIN users u ON p.supervisor_id = u.id WHERE p.id = ?`
+  ).bind(id).first();
   return c.json({ success: true, data: updated });
 });
 

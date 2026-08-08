@@ -26,6 +26,14 @@
 7. **Supervisor Feedback Assistant** — AI-suggested review points for proposal/project review
 8. **Natural Language Project Query** — Ask questions about projects in natural language
 
+## Self Registration & Coordinator Approval
+Students and supervisors can **register themselves** through the login screen (Register tab). A new account starts in `pending` status — before approval they can **only register**, they cannot sign in or use any platform features.
+
+- **Coordinator** reviews pending accounts on the dashboard (Pending Registrations card) and can **Approve** or **Reject** each request
+- **Approved** users (`active`) can sign in and use the full platform
+- **Rejected** accounts (`rejected`) are blocked from signing in
+- Coordinator accounts cannot self-register; they are provisioned by the platform
+
 ## Architecture
 
 ```
@@ -68,7 +76,14 @@ Frontend UI
 | POST | `/api/projects` | Create project |
 | POST | `/api/projects/:id/tasks` | Add task |
 | POST | `/api/projects/:id/milestones` | Add milestone |
-| GET | `/api/users` | List users |
+| GET | `/api/users` | List active users |
+| GET | `/api/users/:id` | Get user detail |
+| GET | `/api/users/supervisors/stats` | Supervisor workload stats |
+| POST | `/api/users/login` | Sign in (blocks pending/rejected accounts) |
+| POST | `/api/users/register` | Self-register student/supervisor (status = `pending`) |
+| GET | `/api/users/pending` | List accounts awaiting approval (coordinator only) |
+| PUT | `/api/users/:id/approve` | Approve a pending account (coordinator only) |
+| PUT | `/api/users/:id/reject` | Reject a pending account (coordinator only) |
 | GET | `/api/dashboard/stats` | Dashboard statistics |
 | GET | `/api/dashboard/ai-usage` | AI usage analytics |
 
@@ -86,7 +101,7 @@ Frontend UI
 
 ## Database Schema
 
-- **users** — Students, supervisors, coordinators
+- **users** — Students, supervisors, coordinators (`status`: `active` | `pending` | `rejected` for approval workflow)
 - **proposals** — FYP proposal submissions
 - **projects** — Active projects with health tracking
 - **project_members** — Student-project mapping
@@ -100,14 +115,16 @@ Frontend UI
 
 ## Demo Workflow
 
-1. **Student** submits a proposal → View proposal quality analysis
-2. **System** automatically checks for similar projects → Similarity report
-3. **Coordinator** views supervisor recommendations → AI-matched supervisors
-4. **Supervisor** uses feedback assistant → AI-suggested review points
-5. **Project** is created → Track tasks, milestones, meetings
-6. **System** monitors health → Risk prediction with explanations
-7. **Any user** views project insights → Data-driven insights
-8. **Any user** asks questions → Natural language project query
+1. **Student / Supervisor** registers themselves → account created with `pending` status (can only register)
+2. **Coordinator** approves the pending account from the dashboard → user can now sign in and use the platform
+3. **Student** submits a proposal → View proposal quality analysis
+4. **System** automatically checks for similar projects → Similarity report
+5. **Coordinator** views supervisor recommendations → AI-matched supervisors
+6. **Supervisor** uses feedback assistant → AI-suggested review points
+7. **Project** is created → Track tasks, milestones, meetings
+8. **System** monitors health → Risk prediction with explanations
+9. **Any user** views project insights → Data-driven insights
+10. **Any user** asks questions → Natural language project query
 
 ## Security
 

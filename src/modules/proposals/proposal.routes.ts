@@ -38,8 +38,13 @@ proposalRoutes.get('/:id', async (c) => {
   return c.json({ success: true, data: proposal });
 });
 
-// POST /api/proposals - Create new proposal
+// POST /api/proposals - Create new proposal (Students only)
 proposalRoutes.post('/', async (c) => {
+  const userRole = c.req.header('X-User-Role') || 'student';
+  if (userRole !== 'student') {
+    return c.json({ success: false, error: 'Only students can submit proposals.' }, 403);
+  }
+
   const body = await c.req.json();
   const userId = c.req.header('X-User-Id') || 'demo-user';
   const id = generateId();
@@ -59,29 +64,63 @@ proposalRoutes.post('/', async (c) => {
 
 // PUT /api/proposals/:id
 proposalRoutes.put('/:id', async (c) => {
-  const id = c.req.param('id');
-  const body = await c.req.json();
+  try {
+    const id = c.req.param('id');
+    const body = await c.req.json();
 
-  const fields: string[] = [];
-  const values: any[] = [];
+    const fields: string[] = [];
+    const values: any[] = [];
 
-  const allowedFields = ['title', 'abstract', 'problem_statement', 'objectives', 'methodology', 'expected_outcomes', 'technologies', 'scope', 'status', 'supervisor_id'];
-  for (const field of allowedFields) {
-    if (body[field] !== undefined) {
-      fields.push(`${field} = ?`);
-      values.push(body[field]);
+    const allowedFields = ['title', 'abstract', 'problem_statement', 'objectives', 'methodology', 'expected_outcomes', 'technologies', 'scope', 'status', 'supervisor_id'];
+    for (const field of allowedFields) {
+      if (body[field] !== undefined) {
+        fields.push(`${field} = ?`);
+        values.push(body[field]);
+      }
     }
+
+    if (fields.length === 0) return c.json({ success: false, error: 'No fields to update' }, 400);
+
+    fields.push("updated_at = datetime('now')");
+    values.push(id);
+
+    await c.env.DB.prepare(`UPDATE proposals SET ${fields.join(', ')} WHERE id = ?`).bind(...values).run();
+    const updated = await c.env.DB.prepare(
+      'SELECT p.*, u.name as submitter_name FROM proposals p LEFT JOIN users u ON p.submitted_by = u.id WHERE p.id = ?'
+    ).bind(id).first() as Record<string, any> | null;
+
+    // Auto-promote proposal to active project when approved
+    if (body.status === 'approved' && updated) {
+      const existingProject = await c.env.DB.prepare('SELECT id FROM projects WHERE proposal_id = ?').bind(id).first();
+      if (!existingProject) {
+        const projectId = generateId();
+        await c.env.DB.prepare(
+          `INSERT INTO projects (id, title, description, proposal_id, status, health, progress, supervisor_id, department, start_date)
+           VALUES (?, ?, ?, ?, 'active', 'healthy', 0, ?, ?, date('now'))`
+        ).bind(
+          projectId,
+          updated.title,
+          updated.abstract || updated.problem_statement || 'Approved FYP Project',
+          id,
+          updated.supervisor_id || null,
+          updated.department || 'Computer Science'
+        ).run();
+
+        // Add student submitter as project member
+        if (updated.submitted_by) {
+          const memberId = generateId();
+          await c.env.DB.prepare(
+            `INSERT INTO project_members (id, project_id, user_id, role) VALUES (?, ?, ?, 'lead')`
+          ).bind(memberId, projectId, updated.submitted_by).run();
+        }
+      }
+    }
+
+    return c.json({ success: true, data: updated });
+  } catch (err: any) {
+    console.error('Update Proposal Error:', err);
+    return c.json({ success: false, error: err?.message || 'Failed to update proposal' }, 500);
   }
-
-  if (fields.length === 0) return c.json({ success: false, error: 'No fields to update' }, 400);
-
-  fields.push("updated_at = datetime('now')");
-  values.push(id);
-
-  await c.env.DB.prepare(`UPDATE proposals SET ${fields.join(', ')} WHERE id = ?`).bind(...values).run();
-  
-  const updated = await c.env.DB.prepare('SELECT * FROM proposals WHERE id = ?').bind(id).first();
-  return c.json({ success: true, data: updated });
 });
 
 // POST /api/proposals/:id/submit

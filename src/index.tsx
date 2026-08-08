@@ -38,6 +38,7 @@ function getIndexHTML(): string {
   <title>Synapse — AI Intelligence Layer for FYP Management</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script>
     tailwind.config = {
       theme: {
@@ -64,7 +65,7 @@ function getIndexHTML(): string {
 <body class="bg-gray-50 min-h-screen">
   <div id="app"></div>
   <div id="toast-container" class="toast"></div>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=20260808-3"></script>
 </body>
 </html>`;
 }
