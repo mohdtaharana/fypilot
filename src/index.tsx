@@ -74,7 +74,7 @@ function getIndexHTML(): string {
 <body class="bg-gray-50 min-h-screen">
   <div id="app"></div>
   <div id="toast-container" class="toast"></div>
-  <script src="/static/app.js?v=20260810-nav2"></script>
+  <script src="/static/app.js?v=20260810-sync"></script>
 </body>
 </html>`;
 }

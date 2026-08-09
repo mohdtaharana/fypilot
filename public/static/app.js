@@ -4334,6 +4334,9 @@ async function loadChatMessages(chatId, opts) {
       res.data.forEach(m => { if (!seen.has(m.id)) { state.chatMessages.push(m); newCount++; } });
       state.chatMessages.sort((a, b) => a.seq - b.seq);
     } else {
+      const prevKey = msgSyncKey(state.chatMessages);
+      const nextKey = msgSyncKey(res.data);
+      if (prevKey === nextKey) return;
       state.chatMessages = res.data;
       newCount = res.data.length;
     }
@@ -4347,6 +4350,11 @@ async function loadChatMessages(chatId, opts) {
       }
     }
   } catch (e) {}
+}
+
+function msgSyncKey(msgs) {
+  if (!msgs || !msgs.length) return '';
+  return msgs.map(m => `${m.id}:${m.content}:${m.is_pinned ? 1 : 0}:${m.is_edited ? 1 : 0}:${m.read_at || ''}`).join('|');
 }
 
 async function sendChatMessage() {
@@ -4671,13 +4679,20 @@ async function startChatWith(userId) {
 }
 
 // ===== Chat Polling & Scroll =====
+let chatPollTick = 0;
 function startChatPolling() {
   stopChatPolling();
+  chatPollTick = 0;
   state.chatListTimer = setInterval(() => { loadChats(true); }, 5000);
   state.chatMsgTimer = setInterval(() => {
     if (state.activeChat && state.currentView === 'chats') {
-      const last = state.chatMessages.length ? state.chatMessages[state.chatMessages.length - 1].seq : 0;
-      loadChatMessages(state.activeChat.id, { silent: true, after: last });
+      chatPollTick++;
+      if (chatPollTick % 4 === 0) {
+        loadChatMessages(state.activeChat.id, { silent: true });
+      } else {
+        const last = state.chatMessages.length ? state.chatMessages[state.chatMessages.length - 1].seq : 0;
+        loadChatMessages(state.activeChat.id, { silent: true, after: last });
+      }
     }
   }, 4000);
 }
