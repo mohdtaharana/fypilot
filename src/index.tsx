@@ -6,6 +6,7 @@ import { projectRoutes } from './modules/projects/project.routes';
 import { userRoutes } from './modules/auth/user.routes';
 import { dashboardRoutes } from './modules/dashboard/dashboard.routes';
 import { groupRoutes } from './modules/groups/group.routes';
+import { chatRoutes } from './modules/chat/chat.routes';
 import type { Env } from './modules/ai/ai.types';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -20,6 +21,7 @@ app.route('/api/projects', projectRoutes);
 app.route('/api/users', userRoutes);
 app.route('/api/dashboard', dashboardRoutes);
 app.route('/api/groups', groupRoutes);
+app.route('/api/chats', chatRoutes);
 
 // Health check
 app.get('/api/health', (c) => {
@@ -62,12 +64,17 @@ function getIndexHTML(): string {
     .score-ring { position: relative; display: inline-flex; align-items: center; justify-content: center; }
     .score-ring svg { transform: rotate(-90deg); }
     .toast { position: fixed; bottom: 1rem; right: 1rem; z-index: 9999; }
+    .chat-scroll::-webkit-scrollbar { width: 6px; }
+    .chat-scroll::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 999px; }
+    .eq-bar { transform-origin: bottom; }
+    .chat-voice-playing .eq-bar { animation: eqBounce 0.9s ease-in-out infinite; }
+    @keyframes eqBounce { 0%, 100% { transform: scaleY(0.4); } 50% { transform: scaleY(1); } }
   </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
   <div id="app"></div>
   <div id="toast-container" class="toast"></div>
-  <script src="/static/app.js?v=20260809-groups3"></script>
+  <script src="/static/app.js?v=20260810-nav2"></script>
 </body>
 </html>`;
 }

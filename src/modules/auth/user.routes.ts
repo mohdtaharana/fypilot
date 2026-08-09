@@ -349,6 +349,8 @@ userRoutes.delete('/:id', async (c) => {
       c.env.DB.prepare('DELETE FROM project_media WHERE uploaded_by = ?').bind(id),
       c.env.DB.prepare('DELETE FROM project_feedback WHERE user_id = ?').bind(id),
       c.env.DB.prepare('DELETE FROM feedback WHERE from_user_id = ? OR to_user_id = ?').bind(id, id),
+      c.env.DB.prepare('DELETE FROM messages WHERE chat_id IN (SELECT id FROM chats WHERE user_a = ? OR user_b = ?)').bind(id, id),
+      c.env.DB.prepare('DELETE FROM chats WHERE user_a = ? OR user_b = ?').bind(id, id),
       c.env.DB.prepare('DELETE FROM ai_audit_log WHERE user_id = ?').bind(id),
       c.env.DB.prepare('DELETE FROM ai_rate_limits WHERE user_id = ?').bind(id),
       c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id),

@@ -20,6 +20,7 @@ const state = {
   loginMode: 'login',
   loginPrefillEmail: '',
   mobileMenuOpen: false,
+  navMoreOpen: false,
   proposals: [],
   projects: [],
   users: [],
@@ -38,6 +39,21 @@ const state = {
   peopleSearch: '',
   aiLoading: {},
   aiResults: {},
+  // Chat state
+  chats: [],
+  activeChat: null,
+  chatMessages: [],
+  chatReplyingTo: null,
+  chatEditing: null,
+  chatPendingMedia: null,
+  chatNewUsers: [],
+  chatNewSearch: '',
+  chatListSearch: '',
+  chatRecording: false,
+  chatVoicePlaying: null,
+  chatAtBottom: true,
+  chatListTimer: null,
+  chatMsgTimer: null,
 };
 
 // Demo User Credentials & Accounts
@@ -124,15 +140,23 @@ function showToast(message, type = 'info') {
 function navigate(view, data = null) {
   state.currentView = view;
   state.mobileMenuOpen = false;
+  state.navMoreOpen = false;
   if (data) {
     if (view === 'proposal-detail') state.selectedProposal = data;
     if (view === 'project-detail') state.selectedProject = data;
   }
+  if (view !== 'chats') stopChatPolling();
   render();
 }
 
 function toggleMobileMenu() {
   state.mobileMenuOpen = !state.mobileMenuOpen;
+  state.navMoreOpen = false;
+  render();
+}
+
+function toggleNavMore() {
+  state.navMoreOpen = !state.navMoreOpen;
   render();
 }
 
@@ -574,6 +598,7 @@ function renderNav() {
     { id: 'proposals', label: 'Proposals', icon: 'fa-file-alt' },
     { id: 'projects', label: 'Projects', icon: 'fa-project-diagram' },
     { id: 'supervisors', label: 'Supervisors', icon: 'fa-user-tie' },
+    { id: 'chats', label: 'Chats', icon: 'fa-comments' },
     ...(role === 'coordinator' ? [{ id: 'people', label: 'People', icon: 'fa-user-friends' }] : []),
     ...(role === 'student' || role === 'coordinator' || role === 'supervisor' ? [{ id: 'groups', label: role === 'student' ? 'My Group' : 'Groups', icon: 'fa-users' }] : []),
     { id: 'profile', label: 'Profile', icon: 'fa-id-badge' },
@@ -587,13 +612,16 @@ function renderNav() {
 
   const currentRole = state.currentUser ? state.currentUser.role : 'guest';
 
+  const primary = links.filter(l => ['dashboard', 'proposals', 'projects', 'chats'].includes(l.id));
+  const more = links.filter(l => !primary.includes(l));
+
   return `
   <nav class="bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm">
     <div class="max-w-7xl mx-auto px-4 sm:px-6">
       <div class="flex items-center justify-between h-16">
         
         <!-- Brand Logo & Title -->
-        <div class="flex items-center gap-2 cursor-pointer" onclick="navigate('dashboard')">
+        <div class="flex items-center gap-2 cursor-pointer shrink-0" onclick="navigate('dashboard')">
           <div class="w-9 h-9 bg-gradient-to-tr from-fypilot-600 to-indigo-600 rounded-xl flex items-center justify-center shadow-md shadow-fypilot-500/20">
             <i class="fas fa-brain text-white text-base"></i>
           </div>
@@ -601,20 +629,44 @@ function renderNav() {
           <span class="text-[10px] bg-fypilot-100 text-fypilot-700 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">AI</span>
         </div>
 
-        <!-- Desktop Navigation Links -->
-        <div class="hidden md:flex items-center gap-1 overflow-x-auto flex-nowrap scrollbar-none">
-          ${links.map(l => `
+        <!-- Desktop Navigation Links (primary + More dropdown, no overflow) -->
+        <div class="hidden md:flex items-center gap-1 flex-1 justify-center min-w-0 px-2">
+          ${primary.map(l => `
             <button onclick="navigate('${l.id}')" 
-                    class="px-3 py-2 rounded-xl text-sm font-semibold transition-all duration-150 flex items-center gap-2 whitespace-nowrap ${state.currentView === l.id || state.currentView.startsWith(l.id) ? 'bg-fypilot-50 text-fypilot-700' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}">
+                    title="${l.label}"
+                    class="px-2.5 py-2 rounded-xl text-sm font-semibold transition-all duration-150 flex items-center gap-2 whitespace-nowrap shrink-0 ${state.currentView === l.id || state.currentView.startsWith(l.id) ? 'bg-fypilot-50 text-fypilot-700' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}">
               <i class="fas ${l.icon} text-sm"></i>
-              <span>${l.label}</span>
+              <span class="hidden lg:inline">${l.label}</span>
+              ${l.id === 'chats' ? `<span id="nav-chat-badge" class="ml-1 hidden bg-fypilot-600 text-white text-[10px] font-bold min-w-4 h-4 px-1.5 rounded-full items-center justify-center"></span>` : ''}
             </button>
           `).join('')}
+
+          ${more.length ? `
+          <div class="relative shrink-0">
+            <button onclick="toggleNavMore()" 
+                    title="More"
+                    class="px-2.5 py-2 rounded-xl text-sm font-semibold transition-all duration-150 flex items-center gap-2 whitespace-nowrap ${more.some(l => state.currentView === l.id || state.currentView.startsWith(l.id)) ? 'bg-fypilot-50 text-fypilot-700' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}">
+              <i class="fas fa-ellipsis text-sm"></i>
+              <span class="hidden lg:inline">More</span>
+              <i class="fas fa-chevron-down text-[10px] ${state.navMoreOpen ? 'rotate-180' : ''} transition-transform"></i>
+            </button>
+
+            ${state.navMoreOpen ? `
+            <div class="absolute right-0 top-full mt-2 w-52 bg-white border border-gray-100 rounded-2xl shadow-xl shadow-gray-200/60 py-2 fade-in z-50">
+              ${more.map(l => `
+                <button onclick="navigate('${l.id}')" 
+                        class="w-full text-left px-4 py-2.5 text-sm font-semibold flex items-center gap-3 transition-colors ${state.currentView === l.id || state.currentView.startsWith(l.id) ? 'bg-fypilot-50 text-fypilot-700' : 'text-gray-700 hover:bg-gray-50'}">
+                  <i class="fas ${l.icon} w-5 text-center ${state.currentView === l.id || state.currentView.startsWith(l.id) ? 'text-fypilot-600' : 'text-fypilot-500'}"></i>
+                  <span>${l.label}</span>
+                </button>
+              `).join('')}
+            </div>` : ''}
+          </div>` : ''}
         </div>
 
         <!-- User Controls (Desktop) -->
-        <div class="hidden md:flex items-center gap-3">
-          <span class="px-2.5 py-1 rounded-full text-xs font-semibold border ${roleBadges[currentRole] || 'bg-gray-100'} capitalize flex items-center gap-1">
+        <div class="hidden md:flex items-center gap-3 shrink-0">
+          <span class="hidden xl:flex px-2.5 py-1 rounded-full text-xs font-semibold border ${roleBadges[currentRole] || 'bg-gray-100'} capitalize items-center gap-1">
             <i class="fas ${currentRole === 'coordinator' ? 'fa-crown text-purple-600' : currentRole === 'supervisor' ? 'fa-user-tie text-blue-600' : 'fa-user-graduate text-emerald-600'} text-xs"></i>
             ${currentRole}
           </span>
@@ -623,7 +675,7 @@ function renderNav() {
             <div class="w-7 h-7 rounded-lg flex items-center justify-center text-white text-xs font-bold overflow-hidden ${state.currentUser.avatar ? '' : 'bg-fypilot-600'}">
               ${state.currentUser.avatar ? `<img src="${state.currentUser.avatar}" alt="" class="w-full h-full object-cover" />` : (state.currentUser.name || 'U').charAt(0)}
             </div>
-            <span class="text-xs font-semibold text-gray-800 truncate max-w-[120px]">${state.currentUser.name || 'User'}</span>
+            <span class="hidden lg:block text-xs font-semibold text-gray-800 truncate max-w-[120px]">${state.currentUser.name || 'User'}</span>
           </div>
 
           <button onclick="logout()" title="Logout" 
@@ -666,6 +718,7 @@ function renderNav() {
                   class="w-full text-left px-3.5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-3 transition-colors ${state.currentView === l.id || state.currentView.startsWith(l.id) ? 'bg-fypilot-50 text-fypilot-700' : 'text-gray-700 hover:bg-gray-50'}">
             <i class="fas ${l.icon} w-5 text-center text-fypilot-500"></i>
             <span>${l.label}</span>
+            ${l.id === 'chats' ? `<span id="nav-chat-badge-m" class="ml-auto hidden bg-fypilot-600 text-white text-[10px] font-bold min-w-4 h-4 px-1.5 rounded-full items-center justify-center"></span>` : ''}
           </button>
         `).join('')}
       </div>
@@ -682,6 +735,7 @@ function renderCurrentView() {
     case 'projects': return renderProjects();
     case 'project-detail': return renderProjectDetail();
     case 'supervisors': return renderSupervisors();
+    case 'chats': return renderChats();
     case 'people': return renderPeople();
     case 'groups': return renderGroups();
     case 'group-profile': return renderGroupProfile();
@@ -3758,6 +3812,906 @@ function showNewProposalForm() {
   }
 }
 
+// ===== Chat Module (WhatsApp-style 1:1 Messaging) =====
+function canChatWith(fromRole, toRole) {
+  if (!fromRole || !toRole) return false;
+  if (fromRole === 'coordinator') return true;
+  if (fromRole === 'supervisor') return toRole === 'student' || toRole === 'coordinator';
+  if (fromRole === 'student') return toRole === 'supervisor' || toRole === 'coordinator';
+  return false;
+}
+
+function chatRoleColor(role) {
+  return { coordinator: 'from-purple-500 to-indigo-600', supervisor: 'from-blue-500 to-fypilot-600', student: 'from-emerald-500 to-teal-600' }[role] || 'from-gray-500 to-gray-600';
+}
+
+function chatAvatar(p, size = 'w-10 h-10 text-sm') {
+  const fallback = escapeHtml((p.name || '?').charAt(0).toUpperCase());
+  if (p.avatar) {
+    return `<div class="${size} rounded-xl overflow-hidden shrink-0 shadow-sm"><img src="${p.avatar}" alt="" class="w-full h-full object-cover" /></div>`;
+  }
+  return `<div class="${size} rounded-xl bg-gradient-to-br ${chatRoleColor(p.role)} text-white flex items-center justify-center font-bold shrink-0 shadow-sm">${fallback}</div>`;
+}
+
+function chatMessagePreview(lm) {
+  if (lm.type === 'image') return '📷 Photo';
+  if (lm.type === 'voice') return '🎤 Voice message';
+  if (lm.type === 'file') return '📎 File';
+  return escapeHtml((lm.content || '').slice(0, 60));
+}
+
+function chatReplyPreview(reply) {
+  if (!reply) return '';
+  if (reply.type === 'image') return '📷 Photo';
+  if (reply.type === 'voice') return '🎤 Voice message';
+  if (reply.type === 'file') return '📎 File';
+  return escapeHtml(reply.content || 'Message');
+}
+
+function parseChatDate(ts) {
+  return new Date(String(ts || '').replace(' ', 'T') + 'Z');
+}
+
+function fmtChatTime(ts) {
+  const d = parseChatDate(ts);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function fmtChatDay(ts) {
+  const d = parseChatDate(ts);
+  if (isNaN(d.getTime())) return '';
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diff = Math.round((today - day) / 86400000);
+  if (diff === 0) return 'Today';
+  if (diff === 1) return 'Yesterday';
+  if (diff > 1 && diff < 7) return d.toLocaleDateString([], { weekday: 'long' });
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatChatDuration(sec) {
+  sec = Math.max(1, Math.floor(sec || 1));
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return m + ':' + (s < 10 ? '0' : '') + s;
+}
+
+// ===== Chat View =====
+function renderChats() {
+  const hasActive = !!state.activeChat;
+  return `
+  <div class="fade-in">
+    <div class="flex bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden h-[calc(100vh-8rem)] min-h-[480px]">
+      <!-- Conversation List -->
+      <div class="${hasActive ? 'hidden sm:flex' : 'flex'} w-full sm:w-80 lg:w-[22rem] flex-col border-r border-gray-100 bg-gray-50/60">
+        <div class="p-4 pb-3 bg-white border-b border-gray-100">
+          <div class="flex items-center justify-between mb-3">
+            <div>
+              <h2 class="text-lg font-bold text-gray-900">Chats</h2>
+              <p class="text-xs text-gray-500">Real-time conversations</p>
+            </div>
+            <button onclick="openNewChatModal()" title="New chat" class="w-10 h-10 rounded-xl bg-gradient-to-br from-fypilot-600 to-indigo-600 text-white shadow-lg shadow-fypilot-500/25 hover:scale-105 transition-all flex items-center justify-center">
+              <i class="fas fa-pen-to-square text-sm"></i>
+            </button>
+          </div>
+          <div class="relative">
+            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs"></i>
+            <input id="chat-search-input" oninput="setChatSearch(this.value)" value="${escapeHtml(state.chatListSearch)}" placeholder="Search chats..." class="w-full pl-9 pr-8 py-2.5 bg-gray-100 border border-transparent focus:bg-white focus:border-fypilot-300 focus:ring-2 focus:ring-fypilot-500/20 rounded-xl text-sm outline-none transition-all" />
+            ${state.chatListSearch ? `<button onclick="setChatSearch('')" class="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"><i class="fas fa-times-circle text-xs"></i></button>` : ''}
+          </div>
+        </div>
+        <div id="chat-list" class="flex-1 overflow-y-auto chat-scroll">
+          ${renderChatList()}
+        </div>
+      </div>
+      <!-- Conversation Window -->
+      <div class="${hasActive ? 'flex' : 'hidden sm:flex'} flex-1 flex-col min-w-0">
+        ${hasActive ? renderChatHeader() + renderChatMessagesArea() + renderChatComposer() : renderChatEmptyState()}
+      </div>
+    </div>
+    <input type="file" id="chat-image-input" accept="image/*" class="hidden" onchange="handleChatImagePick(event)" />
+  </div>`;
+}
+
+function renderChatList() {
+  if (!state.chats.length) {
+    return `<div class="p-8 text-center">
+      <div class="w-16 h-16 mx-auto rounded-2xl bg-fypilot-50 text-fypilot-500 flex items-center justify-center mb-3"><i class="fas fa-comments text-2xl"></i></div>
+      <p class="text-sm font-semibold text-gray-600">No conversations yet</p>
+      <p class="text-xs text-gray-400 mt-1">Start a chat with your supervisor or coordinator</p>
+      <button onclick="openNewChatModal()" class="mt-4 bg-fypilot-600 hover:bg-fypilot-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-md shadow-fypilot-500/20">New Chat</button>
+    </div>`;
+  }
+  const q = (state.chatListSearch || '').toLowerCase();
+  const list = state.chats.filter(c => !q || (c.peer.name || '').toLowerCase().includes(q));
+  if (!list.length) return `<div class="p-8 text-center text-sm text-gray-400">No chats match "${escapeHtml(state.chatListSearch)}"</div>`;
+  return list.map(c => {
+    const active = state.activeChat && state.activeChat.id === c.id;
+    const lm = c.last_message;
+    const preview = lm ? chatMessagePreview(lm) : 'Say hello 👋';
+    const time = lm ? fmtChatTime(lm.created_at) : '';
+    return `
+    <button onclick="openChat('${c.id}')" class="w-full text-left px-3 py-3 flex items-center gap-3 hover:bg-white transition-colors border-b border-gray-50 ${active ? 'bg-white shadow-sm' : ''}">
+      ${chatAvatar(c.peer)}
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center justify-between gap-2">
+          <span class="font-semibold text-sm text-gray-900 truncate">${escapeHtml(c.peer.name)}</span>
+          <span class="text-[10px] text-gray-400 shrink-0">${time}</span>
+        </div>
+        <div class="flex items-center justify-between gap-2 mt-0.5">
+          <span class="text-xs ${lm && lm.is_mine ? 'text-gray-500' : 'text-gray-400'} truncate">${lm && lm.is_mine ? '<i class="fas fa-check-double mr-1 text-[9px] text-fypilot-500"></i>' : ''}${preview}</span>
+          <div class="flex items-center gap-1 shrink-0">
+            ${c.pinned_count ? '<i class="fas fa-thumbtack text-[10px] text-amber-500"></i>' : ''}
+            ${c.unread ? `<span class="min-w-5 h-5 px-1.5 rounded-full bg-fypilot-600 text-white text-[10px] font-bold flex items-center justify-center">${c.unread}</span>` : ''}
+          </div>
+        </div>
+      </div>
+    </button>`;
+  }).join('');
+}
+
+function renderChatEmptyState() {
+  return `
+  <div class="flex-1 flex flex-col items-center justify-center text-center p-8 bg-gradient-to-br from-slate-50 via-fypilot-50/50 to-indigo-50/50">
+    <div class="w-24 h-24 rounded-3xl bg-gradient-to-br from-fypilot-500 to-indigo-600 text-white flex items-center justify-center shadow-2xl shadow-fypilot-500/30 mb-5">
+      <i class="fas fa-comments text-4xl"></i>
+    </div>
+    <h3 class="text-xl font-bold text-gray-900">FYPilot Messenger</h3>
+    <p class="text-sm text-gray-500 mt-1 max-w-sm">Chat with your supervisor and coordinator — send messages, photos, voice notes, reply, pin and more.</p>
+    <button onclick="openNewChatModal()" class="mt-6 bg-gradient-to-br from-fypilot-600 to-indigo-600 hover:scale-105 text-white px-6 py-3 rounded-xl text-sm font-bold shadow-xl shadow-fypilot-500/25 transition-all">
+      <i class="fas fa-pen-to-square mr-2"></i>Start a new chat
+    </button>
+  </div>`;
+}
+
+function renderChatHeader() {
+  const p = state.activeChat.peer;
+  return `
+  <div class="flex items-center gap-3 px-4 py-3 bg-white border-b border-gray-100 shadow-sm z-10">
+    <button onclick="closeChatOnMobile()" class="sm:hidden w-9 h-9 rounded-xl text-gray-500 hover:bg-gray-100 flex items-center justify-center"><i class="fas fa-arrow-left"></i></button>
+    ${chatAvatar(p, 'w-11 h-11 text-base')}
+    <div class="flex-1 min-w-0">
+      <div class="flex items-center gap-2">
+        <h3 class="font-bold text-gray-900 truncate">${escapeHtml(p.name)}</h3>
+        <span class="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider capitalize ${p.role === 'coordinator' ? 'bg-purple-100 text-purple-700' : p.role === 'supervisor' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}">${p.role}</span>
+      </div>
+      <p class="text-xs text-emerald-500 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span> Online · ${escapeHtml(p.department || '')}</p>
+    </div>
+    <button onclick="openPinnedChatMessages()" title="Pinned messages" class="w-9 h-9 rounded-xl text-gray-500 hover:bg-gray-100 flex items-center justify-center relative">
+      <i class="fas fa-thumbtack"></i>
+      ${state.activeChat.pinned_count ? `<span class="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-amber-500 text-white text-[9px] font-bold flex items-center justify-center">${state.activeChat.pinned_count}</span>` : ''}
+    </button>
+    <button onclick="openNewChatModal()" title="New chat" class="w-9 h-9 rounded-xl text-gray-500 hover:bg-gray-100 flex items-center justify-center"><i class="fas fa-pen-to-square"></i></button>
+  </div>`;
+}
+
+function renderChatMessagesArea() {
+  return `
+  <div id="chat-messages" class="flex-1 overflow-y-auto chat-scroll px-3 sm:px-5 py-4 bg-gradient-to-br from-slate-50 via-fypilot-50/50 to-indigo-50/50" onscroll="onChatScroll()">
+    ${renderChatMessages()}
+  </div>`;
+}
+
+function renderChatMessages() {
+  const msgs = state.chatMessages;
+  if (!msgs.length) {
+    return `<div class="h-full flex flex-col items-center justify-center text-center py-16">
+      <div class="w-20 h-20 rounded-3xl bg-gradient-to-br from-fypilot-500 to-indigo-600 text-white flex items-center justify-center shadow-xl shadow-fypilot-500/25 mb-4"><i class="fas fa-hand-sparkles text-3xl"></i></div>
+      <p class="font-bold text-gray-700">Say hello to ${escapeHtml(state.activeChat.peer.name)} 👋</p>
+      <p class="text-xs text-gray-400 mt-1 max-w-xs">Send a message to start the conversation.</p>
+    </div>`;
+  }
+  let html = '';
+  let lastDay = '';
+  const pinned = msgs.filter(m => m.is_pinned);
+  if (pinned.length) {
+    html += `<div class="mb-2"><button onclick="openPinnedChatMessages()" class="w-full bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-xl px-3 py-2 text-[11px] text-amber-800 flex items-center gap-2 transition-colors">
+      <i class="fas fa-thumbtack text-amber-500"></i><span class="font-bold">${pinned.length} pinned message${pinned.length > 1 ? 's' : ''}</span><span class="ml-auto text-amber-500 text-[10px] font-semibold">View</span></button></div>`;
+  }
+  msgs.forEach(m => {
+    const day = fmtChatDay(m.created_at);
+    if (day !== lastDay) {
+      html += `<div class="flex justify-center my-3"><span class="px-3 py-1 rounded-full bg-white/80 border border-gray-200 text-[10px] font-semibold text-gray-500 shadow-sm">${day}</span></div>`;
+      lastDay = day;
+    }
+    html += renderChatMessage(m);
+  });
+  return html;
+}
+
+function renderChatMessage(m) {
+  const me = state.currentUser.id;
+  const mine = m.sender_id === me;
+  const body = chatMessageBody(m);
+  const reply = m.reply ? `<div class="border-l-4 ${mine ? 'border-white/50 bg-white/15' : 'border-fypilot-400 bg-fypilot-50'} rounded-lg pl-2 pr-2 py-1 mb-1.5">
+    <span class="text-[10px] font-bold ${mine ? 'text-white/90' : 'text-fypilot-600'}">${escapeHtml(m.reply.sender_name)}</span>
+    <p class="text-[11px] truncate ${mine ? 'text-white/85' : 'text-gray-500'}">${chatReplyPreview(m.reply)}</p></div>` : '';
+  const actions = `
+    <div class="opacity-0 group-hover:opacity-100 transition-opacity absolute ${mine ? '-top-4 right-1' : '-top-4 left-1'} flex items-center gap-0.5 bg-white rounded-lg shadow-lg px-1 py-0.5 border border-gray-100 z-20">
+      <button onclick="replyToChatMessage('${m.id}')" title="Reply" class="w-7 h-7 rounded-md hover:bg-gray-100 text-gray-600 flex items-center justify-center"><i class="fas fa-reply text-[10px]"></i></button>
+      <button onclick="togglePinChatMessage('${m.id}')" title="${m.is_pinned ? 'Unpin' : 'Pin'}" class="w-7 h-7 rounded-md hover:bg-gray-100 ${m.is_pinned ? 'text-amber-500' : 'text-gray-600'} flex items-center justify-center"><i class="fas fa-thumbtack text-[10px]"></i></button>
+      ${mine ? `<button onclick="editChatMessage('${m.id}')" title="Edit" class="w-7 h-7 rounded-md hover:bg-gray-100 text-gray-600 flex items-center justify-center"><i class="fas fa-pen text-[10px]"></i></button>
+      <button onclick="deleteChatMessage('${m.id}')" title="Delete" class="w-7 h-7 rounded-md hover:bg-red-50 text-red-500 flex items-center justify-center"><i class="fas fa-trash text-[10px]"></i></button>` : ''}
+    </div>`;
+  const ticks = mine ? (m.read_at ? '<i class="fas fa-check-double text-fypilot-300"></i>' : '<i class="fas fa-check-double text-gray-300"></i>') : '';
+  const time = `${fmtChatTime(m.created_at)}${m.is_edited ? ' · edited' : ''}`;
+  const pinTag = m.is_pinned ? `<i class="fas fa-thumbtack text-[10px] ${mine ? 'text-white/80' : 'text-amber-500'} ml-1"></i>` : '';
+
+  if (mine) {
+    return `
+    <div class="flex justify-end mb-1 group relative">
+      <div class="relative max-w-[78%] sm:max-w-[62%]">
+        ${actions}
+        <div class="bg-gradient-to-br from-fypilot-600 to-indigo-600 text-white rounded-2xl rounded-tr-md px-3.5 py-2 shadow-md shadow-fypilot-500/10 relative">
+          ${reply}
+          ${body}
+          <div class="flex items-center justify-end gap-1 mt-0.5 text-[10px] text-white/70">
+            ${time}${pinTag}${ticks}
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }
+  return `
+  <div class="flex items-end gap-2 mb-1 group relative">
+    <div class="shrink-0 self-end mb-1">${chatAvatar({ name: m.sender_name, role: m.sender_role, avatar: m.sender_avatar }, 'w-7 h-7 text-[10px]')}</div>
+    <div class="relative max-w-[78%] sm:max-w-[62%]">
+      ${actions}
+      <div class="bg-white border border-gray-100 rounded-2xl rounded-tl-md px-3.5 py-2 shadow-sm relative">
+        ${reply}
+        ${body}
+        <div class="flex items-center justify-start gap-1 mt-0.5 text-[10px] text-gray-400">
+          ${time}${pinTag}
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function chatMessageBody(m) {
+  if (m.type === 'text') return `<p class="text-sm whitespace-pre-wrap break-words leading-relaxed">${escapeHtml(m.content)}</p>`;
+  if (m.type === 'image') {
+    return `<div>
+      <img src="${m.media_data}" alt="photo" onclick="openChatImage('${m.id}')" class="max-h-72 max-w-full rounded-xl cursor-zoom-in border border-black/5" />
+      ${m.content ? `<p class="text-sm mt-1.5 whitespace-pre-wrap break-words">${escapeHtml(m.content)}</p>` : ''}
+    </div>`;
+  }
+  if (m.type === 'voice') return renderVoicePlayer(m);
+  return `<div class="flex items-center gap-3 min-w-[220px]">
+    <div class="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center"><i class="fas fa-file text-lg"></i></div>
+    <div class="min-w-0"><p class="text-sm font-semibold truncate">${escapeHtml(m.content || 'Attachment')}</p><p class="text-[10px] opacity-75">${escapeHtml(m.media_mime || 'file')}</p></div>
+  </div>`;
+}
+
+// ===== Voice Player =====
+function chatEqBars(id) {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 997;
+  let bars = '';
+  for (let i = 0; i < 24; i++) {
+    h = (h * 17 + i * 13 + 5) % 24 + 4;
+    bars += `<div class="eq-bar flex-1 rounded-full bg-current opacity-80" style="height:${h * 4}%"></div>`;
+  }
+  return bars;
+}
+
+function renderVoicePlayer(m) {
+  const playing = state.chatVoicePlaying === m.id;
+  const mine = m.sender_id === state.currentUser.id;
+  return `
+  <div class="flex items-center gap-3 min-w-[230px] py-0.5">
+    <button onclick="toggleVoicePlayer('${m.id}')" class="w-10 h-10 rounded-full ${mine ? 'bg-white/20 hover:bg-white/30' : 'bg-fypilot-50 hover:bg-fypilot-100'} flex items-center justify-center shrink-0 transition-all shadow-inner">
+      <i id="vp-icon-${m.id}" class="fas ${playing ? 'fa-pause' : 'fa-play'} text-sm ${mine ? '' : 'text-fypilot-600'} ${playing ? '' : 'ml-0.5'}"></i>
+    </button>
+    <div class="flex-1 min-w-0">
+      <div id="vp-bars-${m.id}" class="flex items-end gap-[2px] h-7 ${playing ? 'chat-voice-playing' : ''}">
+        ${chatEqBars(m.id)}
+      </div>
+      <div class="flex items-center justify-between mt-0.5 text-[10px] ${mine ? 'text-white/70' : 'text-gray-400'}">
+        <span>${formatChatDuration(m.media_duration || 1)}</span>
+        <span>${playing ? 'playing' : 'voice message'}</span>
+      </div>
+    </div>
+  </div>`;
+}
+
+let chatVoiceAudio = null;
+
+function getChatVoiceAudio() {
+  if (!chatVoiceAudio) {
+    chatVoiceAudio = new Audio();
+    chatVoiceAudio.preload = 'metadata';
+    chatVoiceAudio.onended = () => {
+      const id = state.chatVoicePlaying;
+      state.chatVoicePlaying = null;
+      if (id) syncVoiceUI(id, false);
+    };
+  }
+  return chatVoiceAudio;
+}
+
+function toggleVoicePlayer(id) {
+  const m = state.chatMessages.find(x => x.id === id);
+  if (!m || !m.media_data) return;
+  const audio = getChatVoiceAudio();
+  if (state.chatVoicePlaying === id) {
+    audio.pause();
+    audio.currentTime = 0;
+    state.chatVoicePlaying = null;
+    syncVoiceUI(id, false);
+    return;
+  }
+  if (state.chatVoicePlaying) syncVoiceUI(state.chatVoicePlaying, false);
+  state.chatVoicePlaying = id;
+  audio.src = m.media_data;
+  audio.play().catch(() => {
+    if (state.chatVoicePlaying === id) {
+      state.chatVoicePlaying = null;
+      syncVoiceUI(id, false);
+    }
+  });
+  syncVoiceUI(id, true);
+}
+
+function syncVoiceUI(id, playing) {
+  const icon = document.getElementById('vp-icon-' + id);
+  const bars = document.getElementById('vp-bars-' + id);
+  if (icon) icon.className = `fas ${playing ? 'fa-pause' : 'fa-play'} text-sm ${playing ? '' : 'ml-0.5'}`;
+  if (bars) bars.classList.toggle('chat-voice-playing', playing);
+}
+
+// ===== Chat Composer =====
+const CHAT_EMOJIS = ['😀', '😂', '😊', '😍', '😎', '🤔', '👍', '👏', '🙏', '🔥', '❤️', '💯', '🎉', '👌', '✌️', '🤝'];
+
+function renderChatComposer() {
+  return `<div id="chat-composer" class="border-t border-gray-100 bg-white px-3 py-3">${renderChatComposerInner()}</div>`;
+}
+
+function renderChatComposerInner() {
+  const replying = state.chatReplyingTo;
+  const editing = state.chatEditing;
+  const pending = state.chatPendingMedia;
+  let bars = '';
+  if (state.chatRecording) {
+    bars = `
+    <div class="flex items-center gap-3 bg-red-50 border border-red-200 rounded-xl px-3 py-2 mb-2">
+      <span class="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse"></span>
+      <span class="text-xs font-bold text-red-600">Recording voice message...</span>
+      <span id="chat-rec-timer" class="text-xs font-semibold text-red-500">0:00</span>
+      <button onclick="stopChatVoice(true)" class="ml-auto text-xs font-semibold text-gray-500 hover:text-gray-700"><i class="fas fa-times mr-1"></i>Cancel</button>
+      <button onclick="stopChatVoice(false)" class="text-xs font-bold text-emerald-600"><i class="fas fa-paper-plane mr-1"></i>Send</button>
+    </div>`;
+  } else if (editing) {
+    bars = `
+    <div class="flex items-center gap-2 bg-fypilot-50 border border-fypilot-200 rounded-xl px-3 py-2 mb-2">
+      <i class="fas fa-pen text-fypilot-500 text-xs"></i>
+      <div class="flex-1 min-w-0">
+        <span class="text-[10px] font-bold text-fypilot-600">Editing message</span>
+        <input id="chat-edit-input" value="${escapeHtml(editing.content)}" class="w-full bg-transparent text-sm outline-none" onkeydown="if(event.key==='Enter'){event.preventDefault();saveChatEdit();}" />
+      </div>
+      <button onclick="cancelChatEdit()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xs"></i></button>
+      <button onclick="saveChatEdit()" class="bg-fypilot-600 hover:bg-fypilot-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg"><i class="fas fa-check mr-1"></i>Save</button>
+    </div>`;
+  } else if (replying) {
+    bars = `
+    <div class="flex items-center gap-2 bg-gray-100 border border-gray-200 rounded-xl px-3 py-2 mb-2">
+      <i class="fas fa-reply text-fypilot-500 text-xs"></i>
+      <div class="flex-1 min-w-0">
+        <span class="text-[10px] font-bold text-fypilot-600">${escapeHtml(replying.sender_name)}</span>
+        <p class="text-xs text-gray-600 truncate">${chatReplyPreview({ type: replying.type, content: replying.content })}</p>
+      </div>
+      <button onclick="cancelChatReply()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xs"></i></button>
+    </div>`;
+  }
+  const mediaBar = pending ? `
+    <div class="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 mb-2">
+      <img src="${pending.data}" class="w-10 h-10 rounded-lg object-cover" alt="preview" />
+      <div class="flex-1"><span class="text-xs font-semibold text-gray-700">Photo ready</span><p class="text-[10px] text-gray-400">Add a caption below and send</p></div>
+      <button onclick="clearChatPendingMedia()" class="w-7 h-7 rounded-lg text-gray-400 hover:bg-gray-200 flex items-center justify-center"><i class="fas fa-times text-xs"></i></button>
+    </div>` : '';
+  const recorderBtn = state.chatRecording
+    ? `<button onclick="stopChatVoice(false)" title="Send voice" class="w-11 h-11 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/25 flex items-center justify-center"><i class="fas fa-paper-plane text-sm"></i></button>`
+    : `<button onclick="startChatVoice()" title="Record voice message" class="w-11 h-11 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-fypilot-600 flex items-center justify-center"><i class="fas fa-microphone text-lg"></i></button>`;
+  return `
+    ${bars}
+    ${mediaBar}
+    <div class="relative">
+      <div id="chat-emoji-picker" class="hidden absolute bottom-full mb-2 left-0 z-30 bg-white border border-gray-100 rounded-2xl shadow-2xl p-3 w-72">
+        <div class="grid grid-cols-8 gap-1">
+          ${CHAT_EMOJIS.map(e => `<button onclick="insertChatEmoji('${e}')" class="text-xl hover:scale-125 transition-transform">${e}</button>`).join('')}
+        </div>
+      </div>
+      <div class="flex items-end gap-2">
+        <button onclick="openChatImagePicker()" title="Send photo" class="w-11 h-11 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-fypilot-600 flex items-center justify-center shrink-0"><i class="fas fa-image text-lg"></i></button>
+        <button onclick="toggleChatEmojiPicker()" title="Emoji" class="w-11 h-11 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-fypilot-600 flex items-center justify-center shrink-0"><i class="fas fa-face-smile text-lg"></i></button>
+        <textarea id="chat-input" rows="1" placeholder="Type a message..." class="flex-1 resize-none border border-gray-200 bg-gray-50 focus:bg-white focus:border-fypilot-300 focus:ring-2 focus:ring-fypilot-500/20 rounded-2xl px-4 py-2.5 text-sm outline-none transition-all chat-scroll" oninput="autoGrowChatInput(this)" onkeydown="handleChatKeydown(event)"></textarea>
+        ${state.chatRecording ? '' : recorderBtn}
+        ${state.chatRecording ? '' : `<button onclick="sendChatMessage()" title="Send" class="w-11 h-11 rounded-xl bg-gradient-to-br from-fypilot-600 to-indigo-600 hover:scale-105 text-white shadow-lg shadow-fypilot-500/25 flex items-center justify-center transition-all shrink-0"><i class="fas fa-paper-plane text-sm"></i></button>`}
+      </div>
+    </div>`;
+}
+
+function renderChatComposerOnly() {
+  const el = document.getElementById('chat-composer');
+  if (el) el.innerHTML = renderChatComposerInner();
+}
+
+function autoGrowChatInput(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+}
+
+function handleChatKeydown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    if (state.chatRecording) { stopChatVoice(false); return; }
+    sendChatMessage();
+  }
+}
+
+function toggleChatEmojiPicker() {
+  const p = document.getElementById('chat-emoji-picker');
+  if (p) p.classList.toggle('hidden');
+}
+
+function hideChatEmojiPicker() {
+  const p = document.getElementById('chat-emoji-picker');
+  if (p) p.classList.add('hidden');
+}
+
+function insertChatEmoji(e) {
+  const input = document.getElementById('chat-input');
+  if (!input) return;
+  input.value += e;
+  input.focus();
+  autoGrowChatInput(input);
+}
+
+function focusChatInput() {
+  const el = document.getElementById('chat-input');
+  if (el) el.focus();
+}
+
+// ===== Chat Actions =====
+async function loadChats(silent) {
+  try {
+    const res = await api('/chats', { silentError: !!silent });
+    state.chats = res.data;
+    if (state.activeChat) {
+      const cur = state.chats.find(c => c.id === state.activeChat.id);
+      if (cur) {
+        state.activeChat.unread = 0;
+        state.activeChat.pinned_count = cur.pinned_count;
+      }
+    }
+    updateNavChatBadge();
+    const listEl = document.getElementById('chat-list');
+    if (listEl) listEl.innerHTML = renderChatList();
+  } catch (e) {}
+}
+
+function updateNavChatBadge() {
+  const total = state.chats.reduce((s, c) => s + (c.unread || 0), 0);
+  ['nav-chat-badge', 'nav-chat-badge-m'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (total > 0) {
+      el.textContent = total > 99 ? '99+' : total;
+      el.classList.remove('hidden');
+      el.classList.add('flex');
+    } else {
+      el.classList.add('hidden');
+      el.classList.remove('flex');
+    }
+  });
+}
+
+async function openChat(chatId) {
+  const chat = state.chats.find(c => c.id === chatId);
+  if (!chat) return;
+  state.activeChat = chat;
+  state.chatMessages = [];
+  state.chatReplyingTo = null;
+  state.chatEditing = null;
+  state.chatPendingMedia = null;
+  render();
+  await loadChatMessages(chatId);
+  chatScrollToBottom(true);
+}
+
+async function loadChatMessages(chatId, opts) {
+  const silent = opts && opts.silent;
+  const after = opts && opts.after;
+  const atBottomBefore = state.chatAtBottom;
+  try {
+    const query = after ? `?after=${after}&mark_read=1` : '?mark_read=1';
+    const res = await api(`/chats/${chatId}/messages${query}`, { silentError: !!silent });
+    let newCount = 0;
+    if (after) {
+      const seen = new Set(state.chatMessages.map(m => m.id));
+      res.data.forEach(m => { if (!seen.has(m.id)) { state.chatMessages.push(m); newCount++; } });
+      state.chatMessages.sort((a, b) => a.seq - b.seq);
+    } else {
+      state.chatMessages = res.data;
+      newCount = res.data.length;
+    }
+    if (state.activeChat && state.activeChat.id === chatId) {
+      const el = document.getElementById('chat-messages');
+      if (el && (newCount > 0 || !after)) {
+        el.innerHTML = renderChatMessages();
+        if (state.chatVoicePlaying) syncVoiceUI(state.chatVoicePlaying, true);
+        if (after) chatScrollToBottom(atBottomBefore);
+        else chatScrollToBottom(true);
+      }
+    }
+  } catch (e) {}
+}
+
+async function sendChatMessage() {
+  if (!state.activeChat) return;
+  const input = document.getElementById('chat-input');
+  const text = input ? input.value.trim() : '';
+  const replyToId = state.chatReplyingTo ? state.chatReplyingTo.id : null;
+  try {
+    if (state.chatPendingMedia) {
+      await api(`/chats/${state.activeChat.id}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ type: 'image', content: text || null, media_data: state.chatPendingMedia.data, media_mime: state.chatPendingMedia.mime, reply_to_id: replyToId })
+      });
+      state.chatPendingMedia = null;
+    } else if (text) {
+      await api(`/chats/${state.activeChat.id}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ type: 'text', content: text, reply_to_id: replyToId })
+      });
+    } else {
+      return;
+    }
+  } catch (e) { return; }
+  if (input) { input.value = ''; autoGrowChatInput(input); }
+  state.chatReplyingTo = null;
+  state.chatEditing = null;
+  hideChatEmojiPicker();
+  await loadChatMessages(state.activeChat.id);
+  chatScrollToBottom(true);
+  loadChats(true);
+}
+
+function replyToChatMessage(id) {
+  const m = state.chatMessages.find(x => x.id === id);
+  if (!m) return;
+  state.chatEditing = null;
+  state.chatReplyingTo = m;
+  renderChatComposerOnly();
+  focusChatInput();
+}
+
+function cancelChatReply() {
+  state.chatReplyingTo = null;
+  renderChatComposerOnly();
+  focusChatInput();
+}
+
+function editChatMessage(id) {
+  const m = state.chatMessages.find(x => x.id === id);
+  if (!m) return;
+  state.chatReplyingTo = null;
+  state.chatEditing = m;
+  renderChatComposerOnly();
+  const input = document.getElementById('chat-edit-input');
+  if (input) {
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
+}
+
+function cancelChatEdit() {
+  state.chatEditing = null;
+  renderChatComposerOnly();
+}
+
+async function saveChatEdit() {
+  if (!state.activeChat || !state.chatEditing) return;
+  const val = (document.getElementById('chat-edit-input') || {}).value || '';
+  const content = val.trim();
+  if (!content) { showToast('Message cannot be empty', 'error'); return; }
+  try {
+    await api(`/chats/${state.activeChat.id}/messages/${state.chatEditing.id}/edit`, {
+      method: 'POST',
+      body: JSON.stringify({ content })
+    });
+    state.chatEditing = null;
+    await loadChatMessages(state.activeChat.id);
+    showToast('Message updated', 'success');
+  } catch (e) {}
+}
+
+async function deleteChatMessage(id) {
+  if (!state.activeChat) return;
+  if (!confirm('Delete this message?')) return;
+  try {
+    await api(`/chats/${state.activeChat.id}/messages/${id}`, { method: 'DELETE' });
+    state.chatMessages = state.chatMessages.filter(m => m.id !== id);
+    const el = document.getElementById('chat-messages');
+    if (el) el.innerHTML = renderChatMessages();
+    loadChats(true);
+    showToast('Message deleted', 'success');
+  } catch (e) {}
+}
+
+async function togglePinChatMessage(id) {
+  const m = state.chatMessages.find(x => x.id === id);
+  if (!m || !state.activeChat) return;
+  const action = m.is_pinned ? 'unpin' : 'pin';
+  try {
+    await api(`/chats/${state.activeChat.id}/messages/${id}/${action}`, { method: 'POST' });
+    showToast(m.is_pinned ? 'Message unpinned' : 'Message pinned', 'success');
+    await loadChatMessages(state.activeChat.id);
+    loadChats(true);
+  } catch (e) {}
+}
+
+// ===== Media: Images & Voice =====
+function openChatImagePicker() {
+  const input = document.getElementById('chat-image-input');
+  if (input) input.click();
+}
+
+function handleChatImagePick(e) {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  if (!file.type.startsWith('image/')) { showToast('Please choose an image file', 'error'); return; }
+  if (file.size > 1.2 * 1024 * 1024) { showToast('Image too large (max 1.2MB)', 'error'); return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    state.chatPendingMedia = { type: 'image', data: reader.result, mime: file.type };
+    renderChatComposerOnly();
+    focusChatInput();
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearChatPendingMedia() {
+  state.chatPendingMedia = null;
+  renderChatComposerOnly();
+}
+
+function openChatImage(id) {
+  const m = state.chatMessages.find(x => x.id === id);
+  if (!m) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'chat-image-overlay';
+  overlay.className = 'fixed inset-0 z-[130] bg-black/90 flex items-center justify-center p-4 cursor-zoom-out';
+  overlay.onclick = () => overlay.remove();
+  overlay.innerHTML = `<div class="max-h-[85vh] max-w-full"><img src="${m.media_data}" class="max-h-[85vh] max-w-full rounded-2xl shadow-2xl object-contain" />${m.content ? `<p class="text-white/80 text-sm mt-3 text-center">${escapeHtml(m.content)}</p>` : ''}</div>`;
+  document.body.appendChild(overlay);
+}
+
+let chatMediaRecorder = null;
+let chatVoiceChunks = [];
+let chatVoiceTimer = null;
+let chatVoiceSeconds = 0;
+let chatVoiceCanceled = false;
+
+async function startChatVoice() {
+  if (!navigator.mediaDevices || !window.MediaRecorder) {
+    showToast('Voice recording is not supported in this browser', 'error');
+    return;
+  }
+  if (state.chatRecording) return;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    chatVoiceCanceled = false;
+    chatMediaRecorder = new MediaRecorder(stream);
+    chatVoiceChunks = [];
+    chatMediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) chatVoiceChunks.push(e.data); };
+    chatMediaRecorder.onstop = () => handleVoiceStop(stream);
+    chatMediaRecorder.start();
+    state.chatRecording = true;
+    chatVoiceSeconds = 0;
+    chatVoiceTimer = setInterval(() => {
+      chatVoiceSeconds++;
+      const el = document.getElementById('chat-rec-timer');
+      if (el) el.textContent = formatChatDuration(chatVoiceSeconds);
+    }, 1000);
+    renderChatComposerOnly();
+  } catch (e) {
+    showToast('Microphone access was denied', 'error');
+  }
+}
+
+function stopChatVoice(cancel) {
+  if (cancel) chatVoiceCanceled = true;
+  if (chatMediaRecorder && chatMediaRecorder.state !== 'inactive') chatMediaRecorder.stop();
+  if (chatVoiceTimer) { clearInterval(chatVoiceTimer); chatVoiceTimer = null; }
+  state.chatRecording = false;
+  if (cancel) chatVoiceChunks = [];
+  renderChatComposerOnly();
+}
+
+function releaseChatMic(stream) {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+}
+
+async function handleVoiceStop(stream) {
+  releaseChatMic(stream);
+  const canceled = chatVoiceCanceled;
+  chatVoiceCanceled = false;
+  const blob = new Blob(chatVoiceChunks, { type: 'audio/webm' });
+  chatVoiceChunks = [];
+  chatMediaRecorder = null;
+  if (canceled) return;
+  if (!state.activeChat) return;
+  if (blob.size === 0) { showToast('Recording was too short', 'error'); return; }
+  if (blob.size > 1.2 * 1024 * 1024) { showToast('Voice message is too long (max ~1.2MB)', 'error'); return; }
+  const replyToId = state.chatReplyingTo ? state.chatReplyingTo.id : null;
+  const duration = Math.max(1, chatVoiceSeconds);
+  const reader = new FileReader();
+  reader.onload = async () => {
+    try {
+      await api(`/chats/${state.activeChat.id}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ type: 'voice', media_data: reader.result, media_mime: 'audio/webm', media_duration: duration, reply_to_id: replyToId })
+      });
+    } catch (e) {}
+    state.chatReplyingTo = null;
+    await loadChatMessages(state.activeChat.id);
+    chatScrollToBottom(true);
+    loadChats(true);
+  };
+  reader.readAsDataURL(blob);
+}
+
+// ===== Pinned & New Chat UI =====
+function openPinnedChatMessages() {
+  const pinned = state.chatMessages.filter(m => m.is_pinned);
+  if (!pinned.length) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'chat-pinned-overlay';
+  overlay.className = 'fixed inset-0 z-[120] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4';
+  overlay.innerHTML = `
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col fade-in">
+    <div class="p-5 border-b border-gray-100 flex items-center justify-between">
+      <h3 class="font-bold text-gray-900"><i class="fas fa-thumbtack text-amber-500 mr-2"></i>Pinned Messages</h3>
+      <button onclick="closeChatModal()" class="w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700 flex items-center justify-center"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="flex-1 overflow-y-auto p-3 space-y-3 chat-scroll">
+      ${pinned.map(m => `<div class="bg-amber-50/70 border border-amber-200 rounded-xl p-3">${renderChatMessage(m)}</div>`).join('')}
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function openNewChatModal() {
+  if (!state.chatNewUsers.length) {
+    try {
+      const res = await api('/users');
+      state.chatNewUsers = (res.data || []).filter(u => u.id !== state.currentUser.id && canChatWith(state.currentUser.role, u.role));
+    } catch (e) { return; }
+  }
+  renderNewChatModal();
+}
+
+function renderNewChatModal() {
+  const existing = new Set(state.chats.map(c => c.peer.id));
+  const overlay = document.getElementById('chat-modal-overlay') || document.createElement('div');
+  overlay.id = 'chat-modal-overlay';
+  overlay.className = 'fixed inset-0 z-[120] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4';
+  overlay.innerHTML = `
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col fade-in">
+    <div class="p-5 border-b border-gray-100 flex items-center justify-between">
+      <h3 class="font-bold text-gray-900"><i class="fas fa-pen-to-square text-fypilot-500 mr-2"></i>New Chat</h3>
+      <button onclick="closeChatModal()" class="w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700 flex items-center justify-center"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="p-4 border-b border-gray-100">
+      <div class="relative">
+        <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs"></i>
+        <input id="chat-new-search" value="${escapeHtml(state.chatNewSearch)}" oninput="setChatNewSearch(this.value)" placeholder="Search people..." class="w-full pl-9 pr-3 py-2.5 bg-gray-100 rounded-xl text-sm outline-none focus:bg-white focus:ring-2 focus:ring-fypilot-500/20 border border-transparent focus:border-fypilot-300 transition-all" />
+      </div>
+    </div>
+    <div id="chat-new-results" class="flex-1 overflow-y-auto p-2 chat-scroll">
+      ${renderNewChatResults()}
+    </div>
+  </div>`;
+  if (!overlay.parentNode) document.body.appendChild(overlay);
+}
+
+function renderNewChatResults() {
+  const q = (state.chatNewSearch || '').toLowerCase();
+  const list = state.chatNewUsers.filter(u => !q || (u.name || '').toLowerCase().includes(q) || (u.role || '').toLowerCase().includes(q));
+  const existing = new Set(state.chats.map(c => c.peer.id));
+  if (!list.length) {
+    return `<div class="p-8 text-center text-sm text-gray-400">No people found${q ? ' for "' + escapeHtml(state.chatNewSearch) + '"' : ''}</div>`;
+  }
+  return list.map(u => `
+    <button onclick="startChatWith('${u.id}')" class="w-full text-left flex items-center gap-3 p-3 rounded-xl hover:bg-gray-50 transition-colors">
+      ${chatAvatar({ name: u.name, role: u.role, avatar: u.avatar }, 'w-11 h-11 text-base')}
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2">
+          <span class="font-semibold text-sm text-gray-900 truncate">${escapeHtml(u.name)}</span>
+          <span class="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider capitalize ${u.role === 'coordinator' ? 'bg-purple-100 text-purple-700' : u.role === 'supervisor' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}">${u.role}</span>
+        </div>
+        <p class="text-xs text-gray-500 truncate">${escapeHtml(u.email || '')}${existing.has(u.id) ? ' · <span class="text-emerald-500 font-semibold">existing chat</span>' : ''}</p>
+      </div>
+      <i class="fas fa-chevron-right text-gray-300 text-xs"></i>
+    </button>`).join('');
+}
+
+function setChatNewSearch(v) {
+  state.chatNewSearch = v;
+  const results = document.getElementById('chat-new-results');
+  if (results) results.innerHTML = renderNewChatResults();
+}
+
+function setChatSearch(v) {
+  state.chatListSearch = v;
+  const listEl = document.getElementById('chat-list');
+  if (listEl) listEl.innerHTML = renderChatList();
+  const input = document.getElementById('chat-search-input');
+  if (input) input.value = v;
+}
+
+function closeChatModal() {
+  ['chat-modal-overlay', 'chat-pinned-overlay'].forEach(id => {
+    const o = document.getElementById(id);
+    if (o) o.remove();
+  });
+}
+
+async function startChatWith(userId) {
+  try {
+    const res = await api('/chats', { method: 'POST', body: JSON.stringify({ other_user_id: userId }) });
+    closeChatModal();
+    await loadChats(true);
+    await openChat(res.data.id);
+  } catch (e) {}
+}
+
+// ===== Chat Polling & Scroll =====
+function startChatPolling() {
+  stopChatPolling();
+  state.chatListTimer = setInterval(() => { loadChats(true); }, 5000);
+  state.chatMsgTimer = setInterval(() => {
+    if (state.activeChat && state.currentView === 'chats') {
+      const last = state.chatMessages.length ? state.chatMessages[state.chatMessages.length - 1].seq : 0;
+      loadChatMessages(state.activeChat.id, { silent: true, after: last });
+    }
+  }, 4000);
+}
+
+function stopChatPolling() {
+  if (state.chatListTimer) { clearInterval(state.chatListTimer); state.chatListTimer = null; }
+  if (state.chatMsgTimer) { clearInterval(state.chatMsgTimer); state.chatMsgTimer = null; }
+  if (state.chatRecording) stopChatVoice(true);
+  if (state.chatVoicePlaying && chatVoiceAudio) {
+    chatVoiceAudio.pause();
+    chatVoiceAudio.currentTime = 0;
+    state.chatVoicePlaying = null;
+  }
+}
+
+function onChatScroll() {
+  const el = document.getElementById('chat-messages');
+  if (!el) return;
+  state.chatAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+}
+
+function chatScrollToBottom(force) {
+  const el = document.getElementById('chat-messages');
+  if (!el) return;
+  if (!force && !state.chatAtBottom) return;
+  el.scrollTop = el.scrollHeight;
+  state.chatAtBottom = true;
+}
+
+function closeChatOnMobile() {
+  state.activeChat = null;
+  render();
+}
+
 // ===== Event Listeners =====
 function attachEventListeners() {
   const isCoordinator = state.currentUser && state.currentUser.role === 'coordinator';
@@ -3783,6 +4737,7 @@ function attachEventListeners() {
     if (state.currentView === 'people') loadPeople();
     if (state.currentView === 'groups') loadGroups();
     if (state.currentView === 'profile') loadProfile();
+    if (state.currentView === 'chats') { loadChats(); startChatPolling(); }
   }
 }
 
@@ -3800,6 +4755,7 @@ window.setLoginMode = setLoginMode;
 window.togglePasswordVisibility = togglePasswordVisibility;
 window.logout = logout;
 window.toggleMobileMenu = toggleMobileMenu;
+window.toggleNavMore = toggleNavMore;
 window.loadProposalDetail = loadProposalDetail;
 window.loadProjectDetail = loadProjectDetail;
 window.approveUser = approveUser;
@@ -3860,6 +4816,34 @@ window.setPeopleSearch = setPeopleSearch;
 window.clearPeopleSearch = clearPeopleSearch;
 window.deletePeopleStudent = deletePeopleStudent;
 window.deletePeopleGroup = deletePeopleGroup;
+window.loadChats = loadChats;
+window.openChat = openChat;
+window.openNewChatModal = openNewChatModal;
+window.closeChatModal = closeChatModal;
+window.startChatWith = startChatWith;
+window.setChatSearch = setChatSearch;
+window.setChatNewSearch = setChatNewSearch;
+window.sendChatMessage = sendChatMessage;
+window.handleChatKeydown = handleChatKeydown;
+window.autoGrowChatInput = autoGrowChatInput;
+window.toggleChatEmojiPicker = toggleChatEmojiPicker;
+window.insertChatEmoji = insertChatEmoji;
+window.openChatImagePicker = openChatImagePicker;
+window.handleChatImagePick = handleChatImagePick;
+window.clearChatPendingMedia = clearChatPendingMedia;
+window.startChatVoice = startChatVoice;
+window.stopChatVoice = stopChatVoice;
+window.replyToChatMessage = replyToChatMessage;
+window.cancelChatReply = cancelChatReply;
+window.editChatMessage = editChatMessage;
+window.cancelChatEdit = cancelChatEdit;
+window.saveChatEdit = saveChatEdit;
+window.deleteChatMessage = deleteChatMessage;
+window.togglePinChatMessage = togglePinChatMessage;
+window.toggleVoicePlayer = toggleVoicePlayer;
+window.openChatImage = openChatImage;
+window.openPinnedChatMessages = openPinnedChatMessages;
+window.closeChatOnMobile = closeChatOnMobile;
 
 // Initial Application Render
 render();
