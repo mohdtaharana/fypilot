@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../ai/ai.types';
 import { generateId } from '../ai/ai.utils';
+import { createNotification, notifyRole } from '../notifications/notification.routes';
 
 type Variables = { userId: string; userRole: string };
 const proposalRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -85,6 +86,23 @@ proposalRoutes.post('/', async (c) => {
   ).run();
 
   const proposal = await c.env.DB.prepare('SELECT * FROM proposals WHERE id = ?').bind(id).first();
+  await notifyRole(c.env.DB, 'coordinator', {
+    type: 'proposal',
+    title: 'New proposal submitted',
+    body: `${group.name} submitted "${body.title}". Review and decide on it.`,
+    link_view: 'proposals',
+    ref_id: id,
+  });
+  const supervisors = await c.env.DB.prepare("SELECT id FROM users WHERE role = 'supervisor' AND (status = 'active' OR status IS NULL)").all();
+  for (const s of supervisors.results as { id: string }[]) {
+    await createNotification(c.env.DB, s.id, {
+      type: 'proposal',
+      title: 'New proposal submitted',
+      body: `${group.name} submitted "${body.title}" — it may need a supervisor.`,
+      link_view: 'proposals',
+      ref_id: id,
+    });
+  }
   return c.json({ success: true, data: proposal }, 201);
 });
 
@@ -122,6 +140,26 @@ proposalRoutes.put('/:id', async (c) => {
     const updated = await c.env.DB.prepare(
       'SELECT p.*, u.name as submitter_name FROM proposals p LEFT JOIN users u ON p.submitted_by = u.id WHERE p.id = ?'
     ).bind(id).first() as Record<string, any> | null;
+
+    if (body.status !== undefined && updated) {
+      const statusLabel = { approved: 'approved', rejected: 'rejected', under_review: 'sent for review', revision_requested: 'sent back for revision' };
+      await createNotification(c.env.DB, updated.submitted_by, {
+        type: 'proposal',
+        title: `Your proposal was ${statusLabel[body.status] || body.status}`,
+        body: `"${updated.title}" was ${statusLabel[body.status] || body.status} by the coordinator.`,
+        link_view: 'proposals',
+        ref_id: id,
+      });
+      if (body.supervisor_id && body.supervisor_id !== '') {
+        await createNotification(c.env.DB, body.supervisor_id, {
+          type: 'proposal',
+          title: 'Proposal assigned to you',
+          body: `"${updated.title}" has been assigned to you as supervisor.`,
+          link_view: 'proposals',
+          ref_id: id,
+        });
+      }
+    }
 
     // Enforce that projects only exist for approved proposals
     if (body.status !== undefined && updated) {

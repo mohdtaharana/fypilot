@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Env } from '../ai/ai.types';
 import { generateId } from '../ai/ai.utils';
 import { deleteGroupsCascade, deleteProjectsCascade } from '../../utils/cascade';
+import { createNotification, notifyRole } from '../notifications/notification.routes';
 
 const userRoutes = new Hono<{ Bindings: Env }>();
 
@@ -128,6 +129,13 @@ userRoutes.post('/register', async (c) => {
     ).run();
 
     const user = await c.env.DB.prepare('SELECT id, email, name, role, department, status FROM users WHERE id = ?').bind(id).first();
+    await notifyRole(c.env.DB, 'coordinator', {
+      type: 'approval',
+      title: `New ${role} registration pending approval`,
+      body: `${name} (${email}) has registered as a ${role} and is waiting for approval.`,
+      link_view: 'dashboard',
+      ref_id: id,
+    });
     return c.json({ success: true, data: user, message: 'Registration submitted! Awaiting coordinator approval.' }, 201);
   } catch (err: any) {
     console.error('Registration Error:', err);
@@ -157,6 +165,13 @@ userRoutes.put('/:id/approve', async (c) => {
   await c.env.DB.prepare("UPDATE users SET status = 'active' WHERE id = ?").bind(id).run();
   const user = await c.env.DB.prepare('SELECT id, email, name, role, department, status FROM users WHERE id = ?').bind(id).first();
   if (!user) return c.json({ success: false, error: 'User not found' }, 404);
+  await createNotification(c.env.DB, id, {
+    type: 'approval',
+    title: 'Your account was approved!',
+    body: `Welcome aboard, ${user.name}. Your account is now active and you can log in.`,
+    link_view: 'dashboard',
+    ref_id: id,
+  });
   return c.json({ success: true, data: user });
 });
 
@@ -168,6 +183,16 @@ userRoutes.put('/:id/reject', async (c) => {
   }
   const id = c.req.param('id');
   await c.env.DB.prepare("UPDATE users SET status = 'rejected' WHERE id = ?").bind(id).run();
+  const rejectedUser = await c.env.DB.prepare('SELECT id, name FROM users WHERE id = ?').bind(id).first();
+  if (rejectedUser) {
+    await createNotification(c.env.DB, id, {
+      type: 'approval',
+      title: 'Your registration was rejected',
+      body: `Hi ${rejectedUser.name}, your registration request was rejected. Please contact the coordinator if you believe this is a mistake.`,
+      link_view: 'dashboard',
+      ref_id: id,
+    });
+  }
   return c.json({ success: true, message: 'User registration rejected' });
 });
 

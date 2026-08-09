@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../ai/ai.types';
 import { generateId } from '../ai/ai.utils';
+import { createNotification } from '../notifications/notification.routes';
 
 const chatRoutes = new Hono<{ Bindings: Env }>();
 
@@ -269,6 +270,17 @@ chatRoutes.post('/:id/messages', async (c) => {
   ).bind(id, chatId, userId, type, content || null, mediaData || null, mediaMime, mediaDuration, replyToId).run();
 
   await c.env.DB.prepare("UPDATE chats SET updated_at = datetime('now') WHERE id = ?").bind(chatId).run();
+
+  const peerId = chat.user_a === userId ? chat.user_b : chat.user_a;
+  const preview = type === 'text' ? (content || '').slice(0, 80) : type === 'image' ? '📷 Photo' : type === 'voice' ? '🎤 Voice message' : '📎 File';
+  const sender = await c.env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(userId).first();
+  await createNotification(c.env.DB, peerId, {
+    type: 'chat',
+    title: `New message from ${sender?.name || 'someone'}`,
+    body: preview || 'New message',
+    link_view: 'chats',
+    ref_id: chatId,
+  });
 
   const row = await c.env.DB.prepare(
     `${MESSAGE_SELECT} WHERE m.id = ?`

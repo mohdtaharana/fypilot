@@ -21,6 +21,12 @@ const state = {
   loginPrefillEmail: '',
   mobileMenuOpen: false,
   navMoreOpen: false,
+  notifications: [],
+  notifUnread: {},
+  notifTotal: 0,
+  notifOpen: false,
+  notifTimer: null,
+  notifGlobalTimer: null,
   proposals: [],
   projects: [],
   users: [],
@@ -141,12 +147,27 @@ function navigate(view, data = null) {
   state.currentView = view;
   state.mobileMenuOpen = false;
   state.navMoreOpen = false;
+  state.notifOpen = false;
+  if (state.notifTimer) { clearInterval(state.notifTimer); state.notifTimer = null; }
   if (data) {
     if (view === 'proposal-detail') state.selectedProposal = data;
     if (view === 'project-detail') state.selectedProject = data;
   }
   if (view !== 'chats') stopChatPolling();
   render();
+  markViewNotificationsRead(view);
+}
+
+async function markViewNotificationsRead(view) {
+  const key = view;
+  const current = state.notifUnread[key];
+  if (!current || current <= 0) return;
+  try {
+    await api('/notifications/read-all', { method: 'POST', body: JSON.stringify({ link_view: key }), silentError: true });
+    state.notifUnread[key] = 0;
+    state.notifTotal = Math.max(0, (state.notifTotal || 0) - current);
+    refreshNavBubbles();
+  } catch (e) {}
 }
 
 function toggleMobileMenu() {
@@ -591,6 +612,172 @@ function logout() {
 }
 
 // ===== Navbar Component =====
+function timeAgo(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date((dateStr || '').replace(' ', 'T'));
+  if (isNaN(d.getTime())) return '';
+  const diff = Date.now() - d.getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return d.toLocaleDateString();
+}
+
+function notifIcon(type) {
+  const map = {
+    approval: 'fa-user-check',
+    proposal: 'fa-file-alt',
+    project: 'fa-project-diagram',
+    group: 'fa-users',
+    chat: 'fa-comments',
+    feedback: 'fa-comment-dots',
+    system: 'fa-info-circle',
+  };
+  const cls = {
+    approval: 'bg-purple-100 text-purple-600',
+    proposal: 'bg-blue-100 text-blue-600',
+    project: 'bg-emerald-100 text-emerald-600',
+    group: 'bg-amber-100 text-amber-600',
+    chat: 'bg-fypilot-100 text-fypilot-600',
+    feedback: 'bg-rose-100 text-rose-600',
+    system: 'bg-gray-100 text-gray-600',
+  };
+  return `<div class="w-9 h-9 rounded-xl ${cls[type] || cls.system} flex items-center justify-center shrink-0"><i class="fas ${map[type] || map.system} text-sm"></i></div>`;
+}
+
+function renderNotificationItem(n) {
+  const time = n.created_at ? timeAgo(n.created_at) : '';
+  return `
+  <button onclick="openNotification('${n.id}')" class="w-full text-left px-4 py-3 flex items-start gap-3 hover:bg-gray-50 transition-colors ${n.is_read ? '' : 'bg-fypilot-50/60'}">
+    ${notifIcon(n.type)}
+    <div class="flex-1 min-w-0">
+      <p class="text-xs font-bold text-gray-900 leading-snug">${escapeHtml(n.title)}</p>
+      ${n.body ? `<p class="text-xs text-gray-500 mt-0.5 leading-snug line-clamp-2">${escapeHtml(n.body)}</p>` : ''}
+      ${time ? `<p class="text-[10px] text-gray-400 mt-1">${time}</p>` : ''}
+    </div>
+    ${n.is_read ? '' : '<span class="w-2 h-2 rounded-full bg-fypilot-500 mt-1 shrink-0"></span>'}
+  </button>`;
+}
+
+function renderNotificationBell() {
+  return `
+  <div class="relative">
+    <button onclick="toggleNotificationPanel()" title="Notifications" class="relative p-2.5 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-fypilot-600 transition-colors">
+      <i class="fas fa-bell text-base"></i>
+      ${state.notifTotal > 0 ? `<span class="absolute top-1 right-1 min-w-4 h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">${state.notifTotal > 99 ? '99+' : state.notifTotal}</span>` : ''}
+    </button>
+    ${state.notifOpen ? renderNotificationPanel() : ''}
+  </div>`;
+}
+
+function renderNotificationBellMobile() {
+  return `
+  <button onclick="toggleNotificationPanel()" title="Notifications" class="relative p-2.5 rounded-xl text-gray-600 hover:bg-gray-100 focus:outline-none">
+    <i class="fas fa-bell text-lg"></i>
+    ${state.notifTotal > 0 ? `<span class="absolute top-1 right-1 min-w-4 h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">${state.notifTotal > 99 ? '99+' : state.notifTotal}</span>` : ''}
+  </button>`;
+}
+
+function renderNotificationPanel() {
+  const items = state.notifications;
+  return `
+  <div class="absolute right-0 top-full mt-2 w-[320px] sm:w-[360px] bg-white border border-gray-100 rounded-2xl shadow-xl shadow-gray-200/60 fade-in z-50 overflow-hidden">
+    <div class="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+      <h3 class="text-sm font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-bell text-fypilot-600"></i> Notifications</h3>
+      ${state.notifTotal ? `<button onclick="markAllNotificationsRead()" class="text-[11px] font-semibold text-fypilot-600 hover:text-fypilot-700 flex items-center gap-1"><i class="fas fa-check-double text-[10px]"></i> Mark all read</button>` : ''}
+    </div>
+    <div class="max-h-[60vh] overflow-y-auto chat-scroll">
+      ${items.length ? items.map(renderNotificationItem).join('') : `<div class="px-4 py-10 text-center text-gray-400 text-sm"><i class="fas fa-bell-slash text-2xl mb-2 block text-gray-300"></i>No notifications yet</div>`}
+    </div>
+    <div class="border-t border-gray-100 p-2">
+      <button onclick="markAllNotificationsRead()" class="w-full text-center text-[11px] font-semibold text-gray-500 hover:text-fypilot-600 py-1.5 rounded-lg hover:bg-gray-50 transition-colors">Mark all as read</button>
+    </div>
+  </div>`;
+}
+
+function toggleNotificationPanel() {
+  state.notifOpen = !state.notifOpen;
+  if (state.notifOpen) {
+    loadNotifications();
+    state.notifTimer = setInterval(() => { loadNotifications(true); }, 10000);
+  } else {
+    if (state.notifTimer) { clearInterval(state.notifTimer); state.notifTimer = null; }
+  }
+  render();
+}
+
+async function loadNotifications(silent) {
+  if (!state.currentUser) return;
+  try {
+    const [listRes, countRes] = await Promise.all([
+      api('/notifications?limit=30', { silentError: !!silent }),
+      api('/notifications/unread-counts', { silentError: !!silent }),
+    ]);
+    if (listRes.data) state.notifications = listRes.data;
+    if (countRes.data) {
+      state.notifUnread = countRes.data.counts || {};
+      state.notifTotal = countRes.data.total || 0;
+    }
+    refreshNavBubbles();
+  } catch (e) {}
+}
+
+function refreshNavBubbles() {
+  document.querySelectorAll('[data-notif-bubble]').forEach(el => {
+    const view = el.getAttribute('data-notif-bubble');
+    const n = state.notifUnread[view] || 0;
+    if (n > 0) {
+      el.textContent = n > 99 ? '99+' : n;
+      el.classList.remove('hidden');
+      el.classList.add('flex');
+    } else {
+      el.classList.add('hidden');
+      el.classList.remove('flex');
+    }
+  });
+}
+
+async function openNotification(id) {
+  const n = state.notifications.find(x => x.id === id);
+  try { await api(`/notifications/${id}/read`, { method: 'POST', silentError: true }); } catch (e) {}
+  const notif = n || {};
+  const view = notif.link_view || 'dashboard';
+  if (!notif.is_read) {
+    state.notifTotal = Math.max(0, (state.notifTotal || 0) - 1);
+    const key = view;
+    state.notifUnread[key] = Math.max(0, (state.notifUnread[key] || 0) - 1);
+  }
+  state.notifOpen = false;
+  if (state.notifTimer) { clearInterval(state.notifTimer); state.notifTimer = null; }
+  if (notif.ref_id && view === 'chats') navigate('chats');
+  else navigate(view);
+}
+
+async function markAllNotificationsRead() {
+  try { await api('/notifications/read-all', { method: 'POST', body: '{}', silentError: true }); } catch (e) {}
+  state.notifications = (state.notifications || []).map(n => ({ ...n, is_read: 1 }));
+  state.notifUnread = { dashboard: 0, proposals: 0, projects: 0, groups: 0, chats: 0, people: 0, profile: 0 };
+  state.notifTotal = 0;
+  render();
+}
+
+function stopNotificationPolling() {
+  if (state.notifTimer) { clearInterval(state.notifTimer); state.notifTimer = null; }
+}
+
+function navBadge(view, mobile) {
+  const n = state.notifUnread[view] || 0;
+  if (!n) return '';
+  const cls = mobile
+    ? 'ml-auto bg-fypilot-600 text-white text-[10px] font-bold min-w-4 h-4 px-1.5 rounded-full flex items-center justify-center'
+    : 'ml-1 bg-fypilot-600 text-white text-[10px] font-bold min-w-4 h-4 px-1.5 rounded-full flex items-center justify-center';
+  return `<span data-notif-bubble="${view}" class="${cls}">${n > 99 ? '99+' : n}</span>`;
+}
+
 function renderNav() {
   const role = state.currentUser ? state.currentUser.role : 'guest';
   const links = [
@@ -637,7 +824,7 @@ function renderNav() {
                     class="px-2.5 py-2 rounded-xl text-sm font-semibold transition-all duration-150 flex items-center gap-2 whitespace-nowrap shrink-0 ${state.currentView === l.id || state.currentView.startsWith(l.id) ? 'bg-fypilot-50 text-fypilot-700' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}">
               <i class="fas ${l.icon} text-sm"></i>
               <span class="hidden lg:inline">${l.label}</span>
-              ${l.id === 'chats' ? `<span id="nav-chat-badge" class="ml-1 hidden bg-fypilot-600 text-white text-[10px] font-bold min-w-4 h-4 px-1.5 rounded-full items-center justify-center"></span>` : ''}
+              ${navBadge(l.id)}
             </button>
           `).join('')}
 
@@ -658,6 +845,7 @@ function renderNav() {
                         class="w-full text-left px-4 py-2.5 text-sm font-semibold flex items-center gap-3 transition-colors ${state.currentView === l.id || state.currentView.startsWith(l.id) ? 'bg-fypilot-50 text-fypilot-700' : 'text-gray-700 hover:bg-gray-50'}">
                   <i class="fas ${l.icon} w-5 text-center ${state.currentView === l.id || state.currentView.startsWith(l.id) ? 'text-fypilot-600' : 'text-fypilot-500'}"></i>
                   <span>${l.label}</span>
+                  ${navBadge(l.id, true)}
                 </button>
               `).join('')}
             </div>` : ''}
@@ -670,7 +858,9 @@ function renderNav() {
             <i class="fas ${currentRole === 'coordinator' ? 'fa-crown text-purple-600' : currentRole === 'supervisor' ? 'fa-user-tie text-blue-600' : 'fa-user-graduate text-emerald-600'} text-xs"></i>
             ${currentRole}
           </span>
-          
+
+          ${renderNotificationBell()}
+
           <div class="flex items-center gap-2 bg-gray-50 border rounded-xl px-3 py-1.5">
             <div class="w-7 h-7 rounded-lg flex items-center justify-center text-white text-xs font-bold overflow-hidden ${state.currentUser.avatar ? '' : 'bg-fypilot-600'}">
               ${state.currentUser.avatar ? `<img src="${state.currentUser.avatar}" alt="" class="w-full h-full object-cover" />` : (state.currentUser.name || 'U').charAt(0)}
@@ -686,6 +876,7 @@ function renderNav() {
 
         <!-- Mobile Hamburger Button -->
         <div class="flex items-center gap-2 md:hidden">
+          ${renderNotificationBellMobile()}
           <button onclick="toggleMobileMenu()" class="p-2.5 rounded-xl text-gray-600 hover:bg-gray-100 focus:outline-none">
             <i class="fas ${state.mobileMenuOpen ? 'fa-times' : 'fa-bars'} text-lg"></i>
           </button>
@@ -718,7 +909,7 @@ function renderNav() {
                   class="w-full text-left px-3.5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-3 transition-colors ${state.currentView === l.id || state.currentView.startsWith(l.id) ? 'bg-fypilot-50 text-fypilot-700' : 'text-gray-700 hover:bg-gray-50'}">
             <i class="fas ${l.icon} w-5 text-center text-fypilot-500"></i>
             <span>${l.label}</span>
-            ${l.id === 'chats' ? `<span id="nav-chat-badge-m" class="ml-auto hidden bg-fypilot-600 text-white text-[10px] font-bold min-w-4 h-4 px-1.5 rounded-full items-center justify-center"></span>` : ''}
+            ${navBadge(l.id, true)}
           </button>
         `).join('')}
       </div>
@@ -4738,6 +4929,11 @@ function attachEventListeners() {
     state.pendingRefreshTimer = null;
   }
 
+  loadNotifications(true);
+  if (state.currentView === 'chats' && !state.notifGlobalTimer) {
+    state.notifGlobalTimer = setInterval(() => { loadNotifications(true); }, 15000);
+  }
+
   if (state.currentView === 'dashboard') {
     loadDashboard();
     if (isCoordinator) {
@@ -4757,6 +4953,7 @@ function attachEventListeners() {
 }
 
 window.addEventListener('focus', () => {
+  if (state.currentUser) loadNotifications(true);
   if (state.currentView === 'dashboard' && state.currentUser && state.currentUser.role === 'coordinator') {
     loadPendingUsers();
   }
@@ -4771,6 +4968,9 @@ window.togglePasswordVisibility = togglePasswordVisibility;
 window.logout = logout;
 window.toggleMobileMenu = toggleMobileMenu;
 window.toggleNavMore = toggleNavMore;
+window.toggleNotificationPanel = toggleNotificationPanel;
+window.openNotification = openNotification;
+window.markAllNotificationsRead = markAllNotificationsRead;
 window.loadProposalDetail = loadProposalDetail;
 window.loadProjectDetail = loadProjectDetail;
 window.approveUser = approveUser;

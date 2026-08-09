@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Env } from '../ai/ai.types';
 import { generateId } from '../ai/ai.utils';
 import { deleteGroupsCascade } from '../../utils/cascade';
+import { createNotification, notifyRole } from '../notifications/notification.routes';
 
 const groupRoutes = new Hono<{ Bindings: Env }>();
 
@@ -116,6 +117,14 @@ groupRoutes.post('/', async (c) => {
   }
 
   const fullGroup = await c.env.DB.prepare('SELECT * FROM groups WHERE id = ?').bind(id).first();
+  const leader = await c.env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(userId).first();
+  await notifyRole(c.env.DB, 'coordinator', {
+    type: 'group',
+    title: 'New group awaiting approval',
+    body: `${leader?.name || 'A student'} created group "${body.name.trim()}" and is waiting for approval.`,
+    link_view: 'groups',
+    ref_id: id,
+  });
   return c.json({ success: true, data: fullGroup, message: 'Group created! Awaiting coordinator approval.' }, 201);
 });
 
@@ -204,6 +213,19 @@ groupRoutes.put('/:id/status', async (c) => {
   if (!group) return c.json({ success: false, error: 'Group not found' }, 404);
 
   await c.env.DB.prepare('UPDATE groups SET status = ? WHERE id = ?').bind(status, id).run();
+
+  const members = await c.env.DB.prepare(
+    'SELECT user_id FROM group_members WHERE group_id = ?'
+  ).bind(id).all();
+  for (const m of members.results as { user_id: string }[]) {
+    await createNotification(c.env.DB, m.user_id, {
+      type: 'group',
+      title: `Your group was ${status}`,
+      body: `The group "${group.name}" was ${status} by the coordinator.`,
+      link_view: 'groups',
+      ref_id: id,
+    });
+  }
   return c.json({ success: true, message: `Group ${status}!` });
 });
 
