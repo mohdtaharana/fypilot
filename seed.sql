@@ -87,82 +87,29 @@ INSERT OR IGNORE INTO proposals (id, title, abstract, problem_statement, objecti
 INSERT OR IGNORE INTO projects (id, title, description, proposal_id, status, health, progress, supervisor_id, department, start_date, end_date) VALUES
   ('proj-1', 'Blockchain-Based Academic Certificate Verification System',
    'A decentralized system for issuing and verifying academic certificates using blockchain technology.',
-   'prop-3', 'active', 'at_risk', 45, 'sup-3', 'Software Engineering', '2026-02-01', '2026-08-30'),
-  ('proj-2', 'Smart Campus Navigation App',
-   'A mobile application providing indoor navigation for university campus using BLE beacons and AR technology.',
-   NULL, 'active', 'healthy', 72, 'sup-2', 'Computer Science', '2026-01-15', '2026-07-30'),
-  ('proj-3', 'Automated Code Review Tool',
-   'An AI-powered tool that reviews code submissions and provides feedback on code quality, security vulnerabilities, and best practices.',
-   NULL, 'active', 'critical', 28, 'sup-1', 'Computer Science', '2026-03-01', '2026-09-15');
+   'prop-3', 'active', 'at_risk', 45, 'sup-3', 'Software Engineering', '2026-02-01', '2026-08-30');
 
 -- Project Members
 INSERT OR IGNORE INTO project_members (id, project_id, user_id, role) VALUES
   ('pm-1', 'proj-1', 'stu-3', 'lead'),
   ('pm-2', 'proj-1', 'stu-6', 'member'),
-  ('pm-3', 'proj-2', 'stu-2', 'lead'),
-  ('pm-4', 'proj-2', 'stu-5', 'member'),
-  ('pm-5', 'proj-3', 'stu-1', 'lead'),
-  ('pm-6', 'proj-3', 'stu-4', 'member');
-
--- Milestones for proj-1 (Blockchain Certificate)
-INSERT OR IGNORE INTO milestones (id, project_id, title, description, due_date, status, completed_at) VALUES
-  ('ms-1', 'proj-1', 'Requirements & Design', 'Complete requirements analysis and system design', '2026-03-01', 'completed', '2026-02-28'),
-  ('ms-2', 'proj-1', 'Smart Contract Development', 'Develop and test Solidity smart contracts', '2026-04-15', 'completed', '2026-04-20'),
-  ('ms-3', 'proj-1', 'Frontend Development', 'Build React verification portal', '2026-05-30', 'in_progress', NULL),
-  ('ms-4', 'proj-1', 'Integration & Testing', 'Integrate all components and perform testing', '2026-07-15', 'pending', NULL),
-  ('ms-5', 'proj-1', 'Deployment & Documentation', 'Deploy to testnet and complete documentation', '2026-08-15', 'pending', NULL);
-
--- Milestones for proj-2 (Campus Navigation)
-INSERT OR IGNORE INTO milestones (id, project_id, title, description, due_date, status, completed_at) VALUES
-  ('ms-6', 'proj-2', 'Research & Prototyping', 'Research BLE beacon tech and create prototype', '2026-02-15', 'completed', '2026-02-12'),
-  ('ms-7', 'proj-2', 'Core Navigation Engine', 'Implement indoor positioning algorithm', '2026-03-30', 'completed', '2026-03-28'),
-  ('ms-8', 'proj-2', 'AR Integration', 'Integrate AR overlay for navigation', '2026-05-15', 'completed', '2026-05-10'),
-  ('ms-9', 'proj-2', 'User Testing', 'Conduct user testing with 30+ students', '2026-06-30', 'in_progress', NULL),
-  ('ms-10', 'proj-2', 'Final Report', 'Complete thesis and final presentation', '2026-07-25', 'pending', NULL);
-
--- Milestones for proj-3 (Code Review Tool)
-INSERT OR IGNORE INTO milestones (id, project_id, title, description, due_date, status, completed_at) VALUES
-  ('ms-11', 'proj-3', 'Literature Review', 'Review existing code analysis tools', '2026-04-01', 'completed', '2026-04-05'),
-  ('ms-12', 'proj-3', 'Parser Development', 'Build code parsing and AST analysis', '2026-05-15', 'overdue', NULL),
-  ('ms-13', 'proj-3', 'AI Model Training', 'Train model on code quality datasets', '2026-06-30', 'pending', NULL),
-  ('ms-14', 'proj-3', 'Integration', 'Build VS Code extension and web interface', '2026-08-01', 'pending', NULL),
-  ('ms-15', 'proj-3', 'Testing & Deployment', 'Test with real student submissions', '2026-09-01', 'pending', NULL);
-
--- Tasks for proj-1
-INSERT OR IGNORE INTO tasks (id, project_id, milestone_id, title, assigned_to, status, priority, due_date, completed_at) VALUES
-  ('task-1', 'proj-1', 'ms-3', 'Design verification portal UI', 'stu-3', 'completed', 'high', '2026-05-10', '2026-05-09'),
-  ('task-2', 'proj-1', 'ms-3', 'Implement certificate upload flow', 'stu-3', 'in_progress', 'high', '2026-05-20', NULL),
-  ('task-3', 'proj-1', 'ms-3', 'Build verification search interface', 'stu-6', 'overdue', 'high', '2026-05-25', NULL),
-  ('task-4', 'proj-1', 'ms-3', 'Connect frontend to smart contracts', 'stu-6', 'todo', 'medium', '2026-06-05', NULL),
-  ('task-5', 'proj-1', 'ms-4', 'Write integration tests', 'stu-3', 'todo', 'medium', '2026-07-01', NULL),
-  ('task-6', 'proj-1', 'ms-4', 'Security audit of smart contracts', 'stu-6', 'todo', 'high', '2026-07-10', NULL);
-
--- Tasks for proj-2
-INSERT OR IGNORE INTO tasks (id, project_id, milestone_id, title, assigned_to, status, priority, due_date, completed_at) VALUES
-  ('task-7', 'proj-2', 'ms-9', 'Recruit test participants', 'stu-2', 'completed', 'medium', '2026-06-15', '2026-06-12'),
-  ('task-8', 'proj-2', 'ms-9', 'Prepare test scenarios', 'stu-5', 'completed', 'medium', '2026-06-20', '2026-06-18'),
-  ('task-9', 'proj-2', 'ms-9', 'Conduct usability testing sessions', 'stu-2', 'in_progress', 'high', '2026-07-05', NULL),
-  ('task-10', 'proj-2', 'ms-9', 'Analyze test results', 'stu-5', 'todo', 'medium', '2026-07-15', NULL),
-  ('task-11', 'proj-2', 'ms-10', 'Write thesis Chapter 1-3', 'stu-2', 'in_progress', 'high', '2026-07-10', NULL),
-  ('task-12', 'proj-2', 'ms-10', 'Prepare presentation slides', 'stu-5', 'todo', 'low', '2026-07-20', NULL);
-
--- Tasks for proj-3 (many overdue to show risk)
-INSERT OR IGNORE INTO tasks (id, project_id, milestone_id, title, assigned_to, status, priority, due_date, completed_at) VALUES
-  ('task-13', 'proj-3', 'ms-12', 'Implement JavaScript parser', 'stu-1', 'overdue', 'high', '2026-05-01', NULL),
-  ('task-14', 'proj-3', 'ms-12', 'Implement Python parser', 'stu-4', 'overdue', 'high', '2026-05-08', NULL),
-  ('task-15', 'proj-3', 'ms-12', 'Build AST analysis module', 'stu-1', 'overdue', 'high', '2026-05-15', NULL),
-  ('task-16', 'proj-3', 'ms-12', 'Code smell detection rules', 'stu-4', 'todo', 'medium', '2026-05-20', NULL),
-  ('task-17', 'proj-3', 'ms-13', 'Collect training dataset', 'stu-1', 'todo', 'medium', '2026-06-01', NULL),
-  ('task-18', 'proj-3', 'ms-13', 'Train initial model', 'stu-4', 'todo', 'high', '2026-06-15', NULL);
+  ('pm-7', 'proj-1', 'stu-1', 'member');
 
 -- Meetings
 INSERT OR IGNORE INTO meetings (id, project_id, title, scheduled_at, completed_at, status, notes) VALUES
   ('meet-1', 'proj-1', 'Week 8 Progress Review', '2026-04-15', '2026-04-15', 'completed', 'Discussed smart contract progress. On track.'),
   ('meet-2', 'proj-1', 'Week 12 Sprint Review', '2026-05-13', '2026-05-13', 'completed', 'Frontend behind schedule. Need to catch up.'),
-  ('meet-3', 'proj-1', 'Week 16 Check-in', '2026-06-10', NULL, 'missed', NULL),
-  ('meet-4', 'proj-2', 'Week 10 Demo', '2026-04-28', '2026-04-28', 'completed', 'Navigation demo impressive. AR needs polish.'),
-  ('meet-5', 'proj-2', 'Week 14 Review', '2026-05-26', '2026-05-26', 'completed', 'User testing plan approved.'),
-  ('meet-6', 'proj-2', 'Week 18 Update', '2026-06-23', '2026-06-23', 'completed', 'Testing going well. Good progress.'),
-  ('meet-7', 'proj-3', 'Week 6 Kickoff', '2026-04-14', '2026-04-14', 'completed', 'Literature review discussed. Timeline set.'),
-  ('meet-8', 'proj-3', 'Week 10 Check-in', '2026-05-12', NULL, 'missed', NULL),
-  ('meet-9', 'proj-3', 'Week 14 Catch-up', '2026-06-09', NULL, 'missed', NULL);
+  ('meet-3', 'proj-1', 'Week 16 Check-in', '2026-06-10', NULL, 'missed', NULL);
+
+-- Student Groups
+INSERT OR IGNORE INTO groups (id, name, leader_id, status, max_members) VALUES
+  ('grp-1', 'GreenIQ — Smart Agriculture Squad', 'stu-4', 'pending', 4),
+  ('grp-2', 'VisionSync — Traffic Vision Team', 'stu-2', 'approved', 4);
+
+INSERT OR IGNORE INTO group_members (id, group_id, user_id) VALUES
+  ('gm-1', 'grp-1', 'stu-4'),
+  ('gm-2', 'grp-1', 'stu-5'),
+  ('gm-3', 'grp-2', 'stu-2'),
+  ('gm-4', 'grp-2', 'stu-1'),
+  ('gm-5', 'grp-2', 'stu-6');
+

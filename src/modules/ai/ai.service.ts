@@ -17,14 +17,14 @@ export class AIService {
 
   constructor(env: Env) {
     this.env = env;
-    this.model = env.OPENROUTER_MODEL || 'google/gemma-4-26b-a4b-it:free';
+    this.model = (env.OPENROUTER_MODEL || 'google/gemma-4-26b-a4b-it:free').trim();
   }
 
   /**
    * Core method: Call OpenRouter API
    */
   private async callAI(prompt: string, systemPrompt?: string, retries = 2): Promise<string | null> {
-    const apiKey = this.env.OPENROUTER_API_KEY;
+    const apiKey = (this.env.OPENROUTER_API_KEY || '').trim();
     if (!apiKey) {
       console.warn('[AI Service] OPENROUTER_API_KEY not configured. Falling back to intelligent deterministic engine.');
       return null;
@@ -43,7 +43,7 @@ export class AIService {
           headers: {
             'Authorization': `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://synapse.pages.dev',
+            'HTTP-Referer': 'https://synapse-90w.pages.dev',
             'X-Title': 'Synapse FYP Platform',
           },
           body: JSON.stringify({
@@ -51,7 +51,6 @@ export class AIService {
             messages,
             temperature: 0.3,
             max_tokens: 2048,
-            response_format: { type: 'json_object' },
           }),
         });
 
@@ -64,7 +63,23 @@ export class AIService {
         }
 
         const data = await response.json() as any;
-        return data.choices?.[0]?.message?.content || null;
+        let content = data.choices?.[0]?.message?.content || null;
+
+        // Extract JSON from markdown code blocks if model wraps it
+        if (content) {
+          const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+          if (jsonMatch) content = jsonMatch[1].trim();
+          // Also handle bare JSON starting with { or [
+          const bareMatch = content.match(/^\s*[\[{][\s\S]*[\]}]\s*$/);
+          if (!bareMatch) {
+            // Try extracting JSON substring
+            const start = content.indexOf('{');
+            const end = content.lastIndexOf('}');
+            if (start !== -1 && end > start) content = content.substring(start, end + 1);
+          }
+        }
+
+        return content;
       } catch (error) {
         console.error(`AI call failed (attempt ${attempt + 1}):`, error);
         if (attempt === retries) return null;
@@ -269,8 +284,9 @@ export class AIService {
     });
 
     if (validated) {
-      await this.storeCache('proposal', proposal.id, 'quality', inputHash, validated, PROPOSAL_ANALYSIS_VERSION);
-      return { success: true, data: validated, cached: false, model: this.model, promptVersion: PROPOSAL_ANALYSIS_VERSION, durationMs };
+      const data = validated as ProposalAnalysisResult;
+      await this.storeCache('proposal', proposal.id, 'quality', inputHash, data, PROPOSAL_ANALYSIS_VERSION);
+      return { success: true, data, cached: false, model: this.model, promptVersion: PROPOSAL_ANALYSIS_VERSION, durationMs };
     }
 
     // Intelligent Fallback Analysis
@@ -292,7 +308,7 @@ export class AIService {
       ],
       recommendations: [
         'Include a system architecture flow diagram',
-        'Specify evaluation benchmarks in project milestones'
+        'Define clear project deliverables and review checkpoints'
       ],
       summary: 'Solid proposal with clear technical direction and realistic implementation scope.'
     };
@@ -378,12 +394,12 @@ export class AIService {
       entityType: 'proposal', entityId: proposal.id,
       promptVersion: SIMILARITY_EXPLANATION_VERSION,
       inputSummary: `Proposal: ${proposal.title}, Compared against ${existingProjects.results.length} projects`,
-      outputSummary: validated ? `Found ${validated.matches.length} similar projects` : 'Failed',
+      outputSummary: validated ? `Found ${(validated.matches ?? []).length} similar projects` : 'Failed',
       durationMs, success: !!validated,
     });
 
     if (validated) {
-      return { success: true, data: validated, cached: false, model: this.model, promptVersion: SIMILARITY_EXPLANATION_VERSION, durationMs };
+      return { success: true, data: validated as SimilarityAnalysisResult, cached: false, model: this.model, promptVersion: SIMILARITY_EXPLANATION_VERSION, durationMs };
     }
 
     // Fallback: return deterministic results without AI explanation
@@ -409,49 +425,22 @@ export class AIService {
     const project = await this.env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(projectId).first();
     if (!project) return { success: false, error: 'Project not found' };
 
-    // Fetch task stats
-    const taskStats = await this.env.DB.prepare(
-      `SELECT 
-        COUNT(*) as total,
-        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
-        SUM(CASE WHEN status = 'overdue' OR (due_date < datetime('now') AND status != 'completed') THEN 1 ELSE 0 END) as overdue
-       FROM tasks WHERE project_id = ?`
-    ).bind(projectId).first();
-
-    // Fetch milestone data
-    const currentMilestone = await this.env.DB.prepare(
-      `SELECT * FROM milestones WHERE project_id = ? AND status != 'completed' ORDER BY due_date ASC LIMIT 1`
-    ).bind(projectId).first();
-
-    // Fetch meetings
-    const meetingStats = await this.env.DB.prepare(
-      `SELECT 
-        SUM(CASE WHEN status = 'missed' THEN 1 ELSE 0 END) as missed,
-        MAX(CASE WHEN status = 'completed' THEN completed_at END) as last_meeting
-       FROM meetings WHERE project_id = ?`
-    ).bind(projectId).first();
-
-    // Fetch last activity
-    const lastActivity = await this.env.DB.prepare(
-      `SELECT MAX(updated_at) as last_update FROM tasks WHERE project_id = ?`
-    ).bind(projectId).first();
-
-    // Calculate deterministic risk factors
+    // Expected progress based on timeline elapsed (start -> end date)
     const now = new Date();
-    const milestoneDelay = currentMilestone?.due_date 
-      ? Math.max(0, Math.round((now.getTime() - new Date(currentMilestone.due_date as string).getTime()) / (1000 * 60 * 60 * 24)))
-      : 0;
-    
-    const lastActivityDate = lastActivity?.last_update ? new Date(lastActivity.last_update as string) : now;
-    const inactivityDays = Math.round((now.getTime() - lastActivityDate.getTime()) / (1000 * 60 * 60 * 24));
+    const startDate = project.start_date ? new Date(project.start_date as string) : null;
+    const endDate = project.end_date ? new Date(project.end_date as string) : null;
+    let expectedProgress = 50;
+    if (startDate && endDate && endDate.getTime() > startDate.getTime()) {
+      const totalDuration = endDate.getTime() - startDate.getTime();
+      const elapsed = now.getTime() - startDate.getTime();
+      expectedProgress = Math.min(100, Math.max(0, Math.round((elapsed / totalDuration) * 100)));
+    }
 
+    // Risk is driven purely by reported progress vs expected progress
     const factors = {
-      overdueTasks: Number(taskStats?.overdue || 0),
-      totalTasks: Number(taskStats?.total || 1),
-      milestoneDelay,
-      progressDelay: Math.max(0, 50 - Number(project.progress || 0)), // simplified
-      inactivityDays,
-      missedMeetings: Number(meetingStats?.missed || 0),
+      progressDelay: Math.max(0, expectedProgress - Number(project.progress || 0)), // behind timeline
+      inactivityDays: 0,
+      missedMeetings: 0,
       pendingFeedback: 0,
     };
 
@@ -461,18 +450,14 @@ export class AIService {
     const prompt = this.fillTemplate(RISK_ANALYSIS_PROMPT, {
       projectTitle: project.title as string,
       progress: String(project.progress || 0),
+      expectedProgress: String(expectedProgress),
       status: project.status as string,
       riskScore: String(riskScore),
       healthStatus,
-      totalTasks: String(taskStats?.total || 0),
-      completedTasks: String(taskStats?.completed || 0),
-      overdueTasks: String(factors.overdueTasks),
-      currentMilestone: currentMilestone?.title as string || 'None',
-      milestoneDelay: String(milestoneDelay),
-      inactivityDays: String(inactivityDays),
-      missedMeetings: String(factors.missedMeetings),
+      inactivityDays: '0',
+      missedMeetings: '0',
       pendingFeedback: '0',
-      upcomingDeadlines: currentMilestone?.due_date || 'None',
+      endDate: (project.end_date as string) || 'Not set',
     });
 
     const raw = await this.callAI(prompt, 'You are a project risk analyst. Return only valid JSON.');
@@ -490,13 +475,14 @@ export class AIService {
 
     if (validated) {
       // Override with deterministic score (AI explains, deterministic decides)
-      validated.riskScore = riskScore;
-      validated.healthStatus = healthStatus;
+      const data = validated as RiskAnalysisResult;
+      data.riskScore = riskScore;
+      data.healthStatus = healthStatus;
       
       // Update project health in DB
       await this.env.DB.prepare('UPDATE projects SET health = ? WHERE id = ?').bind(healthStatus, projectId).run();
       
-      return { success: true, data: validated, cached: false, model: this.model, promptVersion: RISK_ANALYSIS_VERSION, durationMs };
+      return { success: true, data, cached: false, model: this.model, promptVersion: RISK_ANALYSIS_VERSION, durationMs };
     }
 
     // Fallback without AI explanation
@@ -505,11 +491,9 @@ export class AIService {
       riskScore,
       factors: [],
       reasons: [
-        factors.overdueTasks > 0 ? `${factors.overdueTasks} task(s) are overdue` : '',
-        milestoneDelay > 0 ? `Current milestone is ${milestoneDelay} days behind schedule` : '',
-        inactivityDays > 3 ? `No project activity for ${inactivityDays} days` : '',
+        factors.progressDelay > 0 ? `Progress (${project.progress}%) is behind the expected ${expectedProgress}% for this point in the timeline` : 'Progress is on track with the expected timeline',
       ].filter(Boolean),
-      recommendations: ['Review overdue tasks', 'Schedule a supervisor meeting', 'Update project timeline'],
+      recommendations: ['Catch up on project progress to match the expected timeline', 'Prioritize remaining work to close the progress gap'],
       summary: `Project risk score: ${riskScore}/100 (${healthStatus}).`,
     };
 
@@ -540,7 +524,7 @@ export class AIService {
       `${proposal.title} ${proposal.abstract || ''} ${proposal.objectives || ''} ${proposal.technologies || ''}`
     );
 
-    const scored = supervisors.results.map(sup => {
+    const scored = (supervisors.results || []).map((sup: any) => {
       const expertiseArr = sup.expertise ? JSON.parse(sup.expertise as string) : [];
       const researchArr = sup.research_areas ? JSON.parse(sup.research_areas as string) : [];
       const allExpertise = [...expertiseArr, ...researchArr].map((s: string) => s.toLowerCase());
@@ -566,11 +550,11 @@ export class AIService {
       return { ...sup, matchScore, expertiseOverlap, domainMatch };
     });
 
-    scored.sort((a, b) => b.matchScore - a.matchScore);
+    scored.sort((a: any, b: any) => b.matchScore - a.matchScore);
     const topCandidates = scored.slice(0, 5);
 
     // Use AI to explain
-    const supervisorsText = topCandidates.map(s => 
+    const supervisorsText = topCandidates.map((s: any) => 
       `- ID: ${s.id}, Name: ${s.name}, Score: ${s.matchScore}%, Expertise: ${s.expertise || '[]'}, Active Projects: ${s.active_projects}, Department: ${s.department || 'N/A'}`
     ).join('\n');
 
@@ -591,23 +575,24 @@ export class AIService {
       entityType: 'proposal', entityId: proposalId,
       promptVersion: SUPERVISOR_RECOMMENDATION_VERSION,
       inputSummary: `Proposal: ${proposal.title}`,
-      outputSummary: validated ? `${validated.recommendations.length} recommendations` : 'Failed',
+      outputSummary: validated ? `${(validated.recommendations ?? []).length} recommendations` : 'Failed',
       durationMs, success: !!validated,
     });
 
     if (validated) {
       // Override scores with deterministic ones
-      validated.recommendations = validated.recommendations.map(rec => {
-        const match = topCandidates.find(c => c.id === rec.supervisorId);
+      const data = validated as SupervisorRecommendationResult;
+      data.recommendations = (data.recommendations ?? []).map((rec: any) => {
+        const match = topCandidates.find((c: any) => c.id === rec.supervisorId);
         if (match) rec.matchScore = match.matchScore;
         return rec;
       });
-      return { success: true, data: validated, cached: false, model: this.model, promptVersion: SUPERVISOR_RECOMMENDATION_VERSION, durationMs };
+      return { success: true, data, cached: false, model: this.model, promptVersion: SUPERVISOR_RECOMMENDATION_VERSION, durationMs };
     }
 
     // Fallback
     const fallback: SupervisorRecommendationResult = {
-      recommendations: topCandidates.map(s => ({
+      recommendations: topCandidates.map((s: any) => ({
         supervisorId: s.id as string,
         supervisorName: s.name as string,
         matchScore: s.matchScore,
@@ -626,48 +611,22 @@ export class AIService {
     const project = await this.env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(projectId).first();
     if (!project) return { success: false, error: 'Project not found' };
 
-    const taskStats = await this.env.DB.prepare(
-      `SELECT COUNT(*) as total, 
-        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
-        SUM(CASE WHEN status = 'overdue' OR (due_date < datetime('now') AND status != 'completed') THEN 1 ELSE 0 END) as overdue
-       FROM tasks WHERE project_id = ?`
-    ).bind(projectId).first();
-
-    const milestoneStats = await this.env.DB.prepare(
-      `SELECT COUNT(*) as total, SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed
-       FROM milestones WHERE project_id = ?`
-    ).bind(projectId).first();
-
-    const lastMeeting = await this.env.DB.prepare(
-      `SELECT MAX(completed_at) as last_meeting FROM meetings WHERE project_id = ? AND status = 'completed'`
-    ).bind(projectId).first();
-
-    const lastActivity = await this.env.DB.prepare(
-      `SELECT MAX(updated_at) as last_update FROM tasks WHERE project_id = ?`
-    ).bind(projectId).first();
-
-    const members = await this.env.DB.prepare(
-      `SELECT COUNT(*) as count FROM project_members WHERE project_id = ?`
-    ).bind(projectId).first();
-
-    const recentCompleted = await this.env.DB.prepare(
-      `SELECT COUNT(*) as count FROM tasks WHERE project_id = ? AND status = 'completed' AND completed_at > datetime('now', '-7 days')`
-    ).bind(projectId).first();
+    // Expected progress based on timeline elapsed (start -> end date)
+    const now = new Date();
+    const startDate = project.start_date ? new Date(project.start_date as string) : null;
+    const endDate = project.end_date ? new Date(project.end_date as string) : null;
+    let expectedProgress = 50;
+    if (startDate && endDate && endDate.getTime() > startDate.getTime()) {
+      const totalDuration = endDate.getTime() - startDate.getTime();
+      const elapsed = now.getTime() - startDate.getTime();
+      expectedProgress = Math.min(100, Math.max(0, Math.round((elapsed / totalDuration) * 100)));
+    }
 
     const prompt = this.fillTemplate(PROJECT_INSIGHTS_PROMPT, {
       projectTitle: project.title as string,
       progress: String(project.progress || 0),
+      expectedProgress: String(expectedProgress),
       health: project.health as string,
-      totalTasks: String(taskStats?.total || 0),
-      completedTasks: String(taskStats?.completed || 0),
-      overdueTasks: String(taskStats?.overdue || 0),
-      totalMilestones: String(milestoneStats?.total || 0),
-      completedMilestones: String(milestoneStats?.completed || 0),
-      lastActivity: (lastActivity?.last_update as string) || 'No activity recorded',
-      lastMeeting: (lastMeeting?.last_meeting as string) || 'No meetings recorded',
-      teamSize: String(members?.count || 1),
-      daysUntilDeadline: project.end_date ? String(Math.round((new Date(project.end_date as string).getTime() - Date.now()) / (1000 * 60 * 60 * 24))) : 'No deadline set',
-      recentCompleted: String(recentCompleted?.count || 0),
     });
 
     const raw = await this.callAI(prompt, 'You are a project management analyst. Return only valid JSON.');
@@ -679,22 +638,22 @@ export class AIService {
       entityType: 'project', entityId: projectId,
       promptVersion: PROJECT_INSIGHTS_VERSION,
       inputSummary: `Project: ${project.title}`,
-      outputSummary: validated ? `${validated.insights.length} insights generated` : 'Failed',
+      outputSummary: validated ? `${(validated.insights ?? []).length} insights generated` : 'Failed',
       durationMs, success: !!validated,
     });
 
     if (validated) {
-      return { success: true, data: { ...validated, generatedAt: new Date().toISOString() }, cached: false, model: this.model, durationMs };
+      return { success: true, data: { ...validated, generatedAt: new Date().toISOString() } as ProjectInsightsResult, cached: false, model: this.model, durationMs };
     }
 
     // Fallback Insights
     const fallbackInsights: ProjectInsightsResult = {
       insights: [
-        { category: 'positive', message: 'Project activity and task completion are progressing on schedule.' },
-        { category: 'recommendation', message: 'Schedule regular supervisor check-ins ahead of final milestone deadlines.' },
-        { category: 'warning', message: 'Ensure all team members log progress on active tasks.' }
+        { category: 'positive', message: `Reported progress is ${project.progress || 0}%, which is on track with the expected ${expectedProgress}% for this point in the timeline.` },
+        { category: 'recommendation', message: `Continue updating project progress to stay at or above the expected ${expectedProgress}%.` },
+        { category: 'warning', message: 'Keep reported progress accurate so risk flags reflect the real timeline.' }
       ],
-      summary: 'Project trajectory is positive with steady task progress.',
+      summary: 'Project trajectory is positive with steady progress.',
       generatedAt: new Date().toISOString()
     };
 
@@ -708,24 +667,13 @@ export class AIService {
     const project = await this.env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(projectId).first();
     if (!project) return { success: false, error: 'Project not found' };
 
-    const milestones = await this.env.DB.prepare(
-      `SELECT title, status, due_date, completed_at FROM milestones WHERE project_id = ? ORDER BY due_date`
-    ).bind(projectId).all();
-
-    const taskStats = await this.env.DB.prepare(
-      `SELECT COUNT(*) as total, 
-        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
-        SUM(CASE WHEN status = 'overdue' OR (due_date < datetime('now') AND status != 'completed') THEN 1 ELSE 0 END) as overdue
-       FROM tasks WHERE project_id = ?`
-    ).bind(projectId).first();
-
     const members = await this.env.DB.prepare(
       `SELECT COUNT(*) as count FROM project_members WHERE project_id = ?`
     ).bind(projectId).first();
 
-    const milestonesText = milestones.results?.map(m => 
-      `- ${m.title} [${m.status}] Due: ${m.due_date || 'N/A'}`
-    ).join('\n') || 'No milestones';
+    const lastActivity = await this.env.DB.prepare(
+      `SELECT updated_at as last_update FROM projects WHERE id = ?`
+    ).bind(projectId).first();
 
     const prompt = this.fillTemplate(PROJECT_SUMMARY_PROMPT, {
       projectTitle: project.title as string,
@@ -735,11 +683,7 @@ export class AIService {
       health: project.health as string,
       startDate: (project.start_date as string) || 'Not set',
       endDate: (project.end_date as string) || 'Not set',
-      milestones: milestonesText,
-      recentActivity: 'Recent tasks and milestones as listed above',
-      completedTasks: String(taskStats?.completed || 0),
-      totalTasks: String(taskStats?.total || 0),
-      overdueItems: String(taskStats?.overdue || 0),
+      recentActivity: (lastActivity?.last_update as string) || 'No activity recorded',
       teamSize: String(members?.count || 1),
     });
 
@@ -757,15 +701,15 @@ export class AIService {
     });
 
     if (validated) {
-      return { success: true, data: { ...validated, progress: Number(project.progress || 0) }, cached: false, model: this.model, durationMs };
+      return { success: true, data: { ...validated, progress: Number(project.progress || 0) } as ProjectSummaryResult, cached: false, model: this.model, durationMs };
     }
 
     // Fallback Summary
     const fallbackSummary: ProjectSummaryResult = {
-      summary: `Executive Summary for ${project.title}: The project is currently at ${project.progress || 0}% completion with a health status of '${(project.health || 'healthy').replace('_', ' ')}'. Project tasks and milestones are actively being tracked.`,
+      summary: `Executive Summary for ${project.title}: The project is currently at ${project.progress || 0}% completion with a health status of '${(project.health || 'healthy').replace('_', ' ')}'.`,
       keyMilestones: ['Proposal Approval', 'Mid-Term Progress Review', 'Final System Defense'],
       currentBlockers: [],
-      nextActions: ['Complete pending tasks', 'Prepare demonstration build'],
+      nextActions: ['Schedule a progress review', 'Prepare demonstration build'],
       progress: Number(project.progress || 0)
     };
 
@@ -802,7 +746,7 @@ export class AIService {
     });
 
     if (validated) {
-      return { success: true, data: validated, cached: false, model: this.model, durationMs };
+      return { success: true, data: validated as FeedbackAssistantResult, cached: false, model: this.model, durationMs };
     }
 
     // Fallback Feedback
@@ -831,15 +775,6 @@ export class AIService {
     const project = await this.env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(projectId).first();
     if (!project) return { success: false, error: 'Project not found' };
 
-    const tasks = await this.env.DB.prepare(
-      `SELECT t.title, t.status, t.priority, t.due_date, t.assigned_to, u.name as assignee_name
-       FROM tasks t LEFT JOIN users u ON t.assigned_to = u.id WHERE t.project_id = ?`
-    ).bind(projectId).all();
-
-    const milestones = await this.env.DB.prepare(
-      `SELECT title, status, due_date, completed_at FROM milestones WHERE project_id = ?`
-    ).bind(projectId).all();
-
     const meetings = await this.env.DB.prepare(
       `SELECT title, scheduled_at, status FROM meetings WHERE project_id = ? ORDER BY scheduled_at DESC LIMIT 5`
     ).bind(projectId).all();
@@ -851,8 +786,6 @@ export class AIService {
     // Build structured context (no unauthorized data)
     const projectData = JSON.stringify({
       project: { title: project.title, status: project.status, health: project.health, progress: project.progress },
-      tasks: tasks.results,
-      milestones: milestones.results,
       recentMeetings: meetings.results,
       teamMembers: members.results,
     }, null, 2);
@@ -878,59 +811,45 @@ export class AIService {
     });
 
     if (validated) {
-      return { success: true, data: validated, cached: false, model: this.model, durationMs };
+      return { success: true, data: validated as ProjectQueryResult, cached: false, model: this.model, durationMs };
     }
 
-    // Smart fallback: analyze question keywords and generate relevant answer from real DB data
+    // If LLM returned a response, use its answer text directly
+    if (raw) {
+      let answerText = raw;
+      try {
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        answerText = parsed.answer || parsed.response || parsed.content || raw;
+      } catch (e) {
+        answerText = raw;
+      }
+      return {
+        success: true,
+        data: {
+          answer: answerText,
+          sources: ['OpenRouter AI (' + this.model + ')'],
+          confidence: 'high'
+        },
+        cached: false,
+        model: this.model,
+        durationMs
+      };
+    }
     const q = question.toLowerCase();
-    const taskList = tasks.results || [];
-    const milestoneList = milestones.results || [];
     const memberList = members.results || [];
     const meetingList = meetings.results || [];
-
-    const completedTasks = taskList.filter((t: any) => t.status === 'completed');
-    const overdueTasks = taskList.filter((t: any) => t.status === 'overdue' || (t.due_date && new Date(t.due_date as string) < new Date() && t.status !== 'completed'));
-    const pendingTasks = taskList.filter((t: any) => t.status === 'pending' || t.status === 'in_progress');
-    const completedMilestones = milestoneList.filter((m: any) => m.status === 'completed');
-    const upcomingMilestone = milestoneList.find((m: any) => m.status !== 'completed');
 
     let answer = '';
     let sources: string[] = [];
 
-    if (q.includes('task') || q.includes('todo') || q.includes('pending')) {
-      answer = `📋 **Task Summary for "${project.title}":**\n\n` +
-        `• **Total Tasks:** ${taskList.length}\n` +
-        `• **Completed:** ${completedTasks.length}\n` +
-        `• **Pending/In Progress:** ${pendingTasks.length}\n` +
-        `• **Overdue:** ${overdueTasks.length}\n\n` +
-        (overdueTasks.length > 0
-          ? `⚠️ Overdue tasks: ${overdueTasks.map((t: any) => `"${t.title}"`).join(', ')}.\n\n`
-          : '') +
-        (pendingTasks.length > 0
-          ? `🔄 Pending tasks: ${pendingTasks.slice(0, 3).map((t: any) => `"${t.title}"`).join(', ')}.`
-          : 'All tasks are up to date!');
-      sources = ['Task table', 'Project records'];
-
-    } else if (q.includes('milestone') || q.includes('deadline') || q.includes('phase')) {
-      answer = `🏁 **Milestone Status for "${project.title}":**\n\n` +
-        `• **Total Milestones:** ${milestoneList.length}\n` +
-        `• **Completed:** ${completedMilestones.length}\n` +
-        `• **Remaining:** ${milestoneList.length - completedMilestones.length}\n\n` +
-        (upcomingMilestone
-          ? `📅 **Next Milestone:** "${upcomingMilestone.title}" — Due: ${upcomingMilestone.due_date || 'TBD'}`
-          : '✅ All milestones completed!');
-      sources = ['Milestones table'];
-
-    } else if (q.includes('progress') || q.includes('status') || q.includes('health') || q.includes('how is')) {
+    if (q.includes('progress') || q.includes('status') || q.includes('health') || q.includes('how is')) {
       const healthEmoji = project.health === 'healthy' ? '🟢' : project.health === 'at_risk' ? '🟡' : '🔴';
       answer = `📊 **Project Status Report for "${project.title}":**\n\n` +
         `• **Overall Progress:** ${project.progress || 0}%\n` +
         `• **Health:** ${healthEmoji} ${String(project.health || 'healthy').replace('_', ' ').toUpperCase()}\n` +
         `• **Status:** ${String(project.status || 'active').replace('_', ' ')}\n` +
-        `• **Tasks Done:** ${completedTasks.length}/${taskList.length}\n` +
-        `• **Milestones Done:** ${completedMilestones.length}/${milestoneList.length}\n\n` +
-        (overdueTasks.length > 0 ? `⚠️ ${overdueTasks.length} overdue task(s) need attention.` : '✅ No overdue tasks.');
-      sources = ['Projects table', 'Tasks table', 'Milestones table'];
+        `• **Team Size:** ${memberList.length} member(s)`;
+      sources = ['Projects table', 'Project members table'];
 
     } else if (q.includes('team') || q.includes('member') || q.includes('who') || q.includes('student')) {
       answer = `👥 **Team for "${project.title}":**\n\n` +
@@ -952,11 +871,9 @@ export class AIService {
       answer = `📋 **Project Overview — "${project.title}":**\n\n` +
         `• **Progress:** ${project.progress || 0}% complete\n` +
         `• **Health:** ${healthEmoji} ${String(project.health || 'healthy').replace('_', ' ')}\n` +
-        `• **Tasks:** ${completedTasks.length}/${taskList.length} done, ${overdueTasks.length} overdue\n` +
-        `• **Milestones:** ${completedMilestones.length}/${milestoneList.length} complete\n` +
         `• **Team Size:** ${memberList.length} member(s)\n\n` +
-        `Ask me specifically about: tasks, milestones, team members, meetings, or project health!`;
-      sources = ['Projects table', 'Tasks table', 'Milestones table'];
+        `Ask me specifically about: progress, team members, meetings, or project health!`;
+      sources = ['Projects table', 'Project members table', 'Meetings table'];
     }
 
     const fallbackQuery: ProjectQueryResult = {

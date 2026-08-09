@@ -36,6 +36,7 @@ export interface ProposalAnalysisResult {
   strengths: string[];
   weaknesses: string[];
   recommendations: string[];
+  summary?: string;
 }
 
 // Similarity Analysis Types
@@ -56,7 +57,7 @@ export interface SimilarityAnalysisResult {
 export interface RiskAnalysisResult {
   healthStatus: 'healthy' | 'at_risk' | 'critical';
   riskScore: number;
-  factors: RiskFactor[];
+  factors?: RiskFactor[];
   reasons: string[];
   recommendations: string[];
   summary: string;
@@ -75,11 +76,11 @@ export interface SupervisorRecommendation {
   supervisorName: string;
   matchScore: number;
   reasons: string[];
-  expertiseMatch: number;
-  domainMatch: number;
-  workloadScore: number;
-  experienceScore: number;
-  departmentScore: number;
+  expertiseMatch?: number;
+  domainMatch?: number;
+  workloadScore?: number;
+  experienceScore?: number;
+  departmentScore?: number;
 }
 
 export interface SupervisorRecommendationResult {
@@ -96,15 +97,18 @@ export interface ProjectInsight {
 
 export interface ProjectInsightsResult {
   insights: ProjectInsight[];
+  summary?: string;
   generatedAt: string;
 }
 
 // Project Summary Types
 export interface ProjectSummaryResult {
-  currentState: string;
+  currentState?: string;
   progress: number;
-  majorAchievements: string[];
-  majorRisks: string[];
+  majorAchievements?: string[];
+  majorRisks?: string[];
+  keyMilestones?: string[];
+  currentBlockers?: string[];
   nextActions: string[];
   summary: string;
 }
@@ -118,18 +122,20 @@ export interface FeedbackSuggestion {
 
 export interface FeedbackAssistantResult {
   reviewPoints: string[];
-  missingSections: string[];
-  clarityImprovements: string[];
-  technicalConcerns: string[];
-  scopeConcerns: string[];
-  questionsForStudents: string[];
+  missingSections?: string[];
+  clarityImprovements?: string[];
+  technicalConcerns?: string[];
+  scopeConcerns?: string[];
+  questionsForStudents?: string[];
+  summary?: string;
 }
 
 // Project Query Types
 export interface ProjectQueryResult {
   answer: string;
-  dataUsed: string[];
-  confidence: 'high' | 'medium' | 'low';
+  dataUsed?: string[];
+  sources?: string[];
+  confidence: 'high' | 'medium' | 'low' | number;
 }
 
 // Database Model Types
@@ -176,32 +182,6 @@ export interface Project {
   department?: string;
   start_date?: string;
   end_date?: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Milestone {
-  id: string;
-  project_id: string;
-  title: string;
-  description?: string;
-  due_date?: string;
-  completed_at?: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'overdue';
-  created_at: string;
-}
-
-export interface Task {
-  id: string;
-  project_id: string;
-  milestone_id?: string;
-  title: string;
-  description?: string;
-  assigned_to?: string;
-  status: 'todo' | 'in_progress' | 'completed' | 'overdue';
-  priority: 'low' | 'medium' | 'high' | 'urgent';
-  due_date?: string;
-  completed_at?: string;
   created_at: string;
   updated_at: string;
 }

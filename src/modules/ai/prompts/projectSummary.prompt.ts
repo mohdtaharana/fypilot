@@ -8,21 +8,16 @@ Health: {{health}}
 Start Date: {{startDate}}
 End Date: {{endDate}}
 
-MILESTONES:
-{{milestones}}
-
 RECENT ACTIVITY:
 {{recentActivity}}
 
 KEY METRICS:
-- Tasks Completed: {{completedTasks}}/{{totalTasks}}
-- Overdue Items: {{overdueItems}}
 - Team Members: {{teamSize}}
 
 Generate a professional executive summary including:
 1. Current state in one line
-2. Major achievements (based on completed milestones/tasks)
-3. Major risks (based on overdue items, health status)
+2. Major achievements (based on project progress and status)
+3. Major risks (based on health status)
 4. Next recommended actions
 
 IMPORTANT: Return ONLY valid JSON in this exact format:

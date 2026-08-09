@@ -118,9 +118,6 @@ export function findOverlappingConcepts(text1: string, text2: string): string[] 
  * Deterministic risk score calculation
  */
 export function calculateDeterministicRiskScore(factors: {
-  overdueTasks: number;
-  totalTasks: number;
-  milestoneDelay: number; // days behind
   progressDelay: number; // percentage behind expected
   inactivityDays: number;
   missedMeetings: number;
@@ -128,32 +125,21 @@ export function calculateDeterministicRiskScore(factors: {
 }): { score: number; status: 'healthy' | 'at_risk' | 'critical' } {
   let riskScore = 0;
   
-  // Overdue tasks factor (weight: 25)
-  if (factors.totalTasks > 0) {
-    const overdueRatio = factors.overdueTasks / factors.totalTasks;
-    riskScore += overdueRatio * 25;
-  }
-  
-  // Milestone delay factor (weight: 25)
-  if (factors.milestoneDelay > 0) {
-    riskScore += Math.min(factors.milestoneDelay / 14 * 25, 25);
-  }
-  
-  // Progress delay factor (weight: 20)
+  // Progress gap factor — the sole driver of project risk (full range)
   if (factors.progressDelay > 0) {
-    riskScore += Math.min(factors.progressDelay / 30 * 20, 20);
+    riskScore += Math.min(factors.progressDelay * 1.5, 100);
   }
   
-  // Inactivity factor (weight: 15)
+  // Inactivity factor (weight: 30)
   if (factors.inactivityDays > 3) {
-    riskScore += Math.min((factors.inactivityDays - 3) / 10 * 15, 15);
+    riskScore += Math.min((factors.inactivityDays - 3) / 10 * 30, 30);
   }
   
-  // Missed meetings factor (weight: 10)
-  riskScore += Math.min(factors.missedMeetings * 5, 10);
+  // Missed meetings factor (weight: 20)
+  riskScore += Math.min(factors.missedMeetings * 5, 20);
   
-  // Pending feedback factor (weight: 5)
-  riskScore += Math.min(factors.pendingFeedback * 2.5, 5);
+  // Pending feedback factor (weight: 10)
+  riskScore += Math.min(factors.pendingFeedback * 2.5, 10);
   
   riskScore = Math.round(Math.min(riskScore, 100));
   

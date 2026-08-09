@@ -181,6 +181,37 @@ aiRoutes.post('/feedback-suggestions', async (c) => {
   return c.json(result, result.success ? 200 : 500);
 });
 
+// GET /api/ai/debug
+aiRoutes.get('/debug', async (c) => {
+  const key = c.env.OPENROUTER_API_KEY ? `${c.env.OPENROUTER_API_KEY.substring(0, 12)}... (length: ${c.env.OPENROUTER_API_KEY.length})` : 'MISSING';
+  const model = c.env.OPENROUTER_MODEL || 'MISSING';
+  
+  let openRouterStatus = 'not_called';
+  let openRouterResponse = '';
+  try {
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${(c.env.OPENROUTER_API_KEY || '').trim()}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://synapse-90w.pages.dev',
+        'X-Title': 'Synapse FYP Platform',
+      },
+      body: JSON.stringify({
+        model: (c.env.OPENROUTER_MODEL || 'google/gemma-4-31b-it:free').trim(),
+        messages: [{ role: 'user', content: 'Say hello in 3 words' }],
+        max_tokens: 30
+      })
+    });
+    openRouterStatus = `${res.status} ${res.statusText}`;
+    openRouterResponse = await res.text();
+  } catch (e: any) {
+    openRouterStatus = `Fetch Error: ${e?.message}`;
+  }
+
+  return c.json({ key, model, openRouterStatus, openRouterResponse });
+});
+
 // POST /api/ai/project-query
 aiRoutes.post('/project-query', async (c) => {
   const ai = new AIService(c.env);

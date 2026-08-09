@@ -28,6 +28,14 @@ const state = {
   pendingRefreshTimer: null,
   selectedProposal: null,
   selectedProject: null,
+  groups: [],
+  selectedGroup: null,
+  myGroup: null,
+  students: [],
+  people: null,
+  peopleView: 'grid',
+  peopleTab: 'all',
+  peopleSearch: '',
   aiLoading: {},
   aiResults: {},
 };
@@ -50,7 +58,7 @@ const DEMO_ACCOUNTS = {
     defaultEmail: 'ahmed.khan@university.edu',
     passwordHint: 'supervisor123',
     name: 'Dr. Ahmed Khan',
-    desc: 'Project oversight, task assignment & meeting scheduler'
+    desc: 'Project oversight, proposal approvals & health overrides'
   },
   student: {
     role: 'student',
@@ -83,7 +91,13 @@ async function api(path, options = {}) {
 
   try {
     const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch (e) {
+      throw new Error(res.ok ? 'Invalid response from server' : (text || `Server error (${res.status})`));
+    }
     if (!res.ok) throw new Error(data.error || 'Request failed');
     return data;
   } catch (err) {
@@ -149,7 +163,7 @@ function renderLoginScreen() {
   const isRegisterMode = state.loginMode === 'register';
 
   return `
-  <div class="min-h-screen bg-gradient-to-br from-slate-900 via-synapse-950 to-indigo-950 flex items-center justify-center p-4 sm:p-6 relative overflow-hidden">
+  <div class="min-h-screen bg-gradient-to-br from-slate-900 via-synapse-900 to-indigo-950 flex items-center justify-center p-4 sm:p-6 relative overflow-hidden">
     <!-- Ambient Blur Background Elements -->
     <div class="absolute -top-32 -left-32 w-96 h-96 bg-synapse-500/20 rounded-full blur-3xl pointer-events-none"></div>
     <div class="absolute -bottom-32 -right-32 w-96 h-96 bg-indigo-500/20 rounded-full blur-3xl pointer-events-none"></div>
@@ -554,11 +568,15 @@ function logout() {
 
 // ===== Navbar Component =====
 function renderNav() {
+  const role = state.currentUser ? state.currentUser.role : 'guest';
   const links = [
     { id: 'dashboard', label: 'Dashboard', icon: 'fa-chart-line' },
     { id: 'proposals', label: 'Proposals', icon: 'fa-file-alt' },
     { id: 'projects', label: 'Projects', icon: 'fa-project-diagram' },
     { id: 'supervisors', label: 'Supervisors', icon: 'fa-user-tie' },
+    ...(role === 'coordinator' ? [{ id: 'people', label: 'People', icon: 'fa-user-friends' }] : []),
+    ...(role === 'student' || role === 'coordinator' || role === 'supervisor' ? [{ id: 'groups', label: role === 'student' ? 'My Group' : 'Groups', icon: 'fa-users' }] : []),
+    { id: 'profile', label: 'Profile', icon: 'fa-id-badge' },
   ];
 
   const roleBadges = {
@@ -584,10 +602,10 @@ function renderNav() {
         </div>
 
         <!-- Desktop Navigation Links -->
-        <div class="hidden md:flex items-center gap-1">
+        <div class="hidden md:flex items-center gap-1 overflow-x-auto flex-nowrap scrollbar-none">
           ${links.map(l => `
             <button onclick="navigate('${l.id}')" 
-                    class="px-3.5 py-2 rounded-xl text-sm font-semibold transition-all duration-150 flex items-center gap-2 ${state.currentView === l.id || state.currentView.startsWith(l.id) ? 'bg-synapse-50 text-synapse-700' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}">
+                    class="px-3 py-2 rounded-xl text-sm font-semibold transition-all duration-150 flex items-center gap-2 whitespace-nowrap ${state.currentView === l.id || state.currentView.startsWith(l.id) ? 'bg-synapse-50 text-synapse-700' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}">
               <i class="fas ${l.icon} text-sm"></i>
               <span>${l.label}</span>
             </button>
@@ -602,8 +620,8 @@ function renderNav() {
           </span>
           
           <div class="flex items-center gap-2 bg-gray-50 border rounded-xl px-3 py-1.5">
-            <div class="w-7 h-7 bg-synapse-600 rounded-lg flex items-center justify-center text-white text-xs font-bold">
-              ${(state.currentUser.name || 'U').charAt(0)}
+            <div class="w-7 h-7 rounded-lg flex items-center justify-center text-white text-xs font-bold overflow-hidden ${state.currentUser.avatar ? '' : 'bg-synapse-600'}">
+              ${state.currentUser.avatar ? `<img src="${state.currentUser.avatar}" alt="" class="w-full h-full object-cover" />` : (state.currentUser.name || 'U').charAt(0)}
             </div>
             <span class="text-xs font-semibold text-gray-800 truncate max-w-[120px]">${state.currentUser.name || 'User'}</span>
           </div>
@@ -627,10 +645,10 @@ function renderNav() {
     <!-- Mobile Dropdown Menu -->
     ${state.mobileMenuOpen ? `
     <div class="md:hidden bg-white border-t border-gray-200 px-4 py-3 space-y-2 fade-in shadow-lg">
-      <div class="flex items-center justify-between pb-3 border-b border-gray-100">
+        <div class="flex items-center justify-between pb-3 border-b border-gray-100">
         <div class="flex items-center gap-2">
-          <div class="w-8 h-8 bg-synapse-600 rounded-lg flex items-center justify-center text-white text-sm font-bold">
-            ${(state.currentUser.name || 'U').charAt(0)}
+          <div class="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm font-bold overflow-hidden ${state.currentUser.avatar ? '' : 'bg-synapse-600'}">
+            ${state.currentUser.avatar ? `<img src="${state.currentUser.avatar}" alt="" class="w-full h-full object-cover" />` : (state.currentUser.name || 'U').charAt(0)}
           </div>
           <div>
             <div class="text-sm font-semibold text-gray-900">${state.currentUser.name || 'User'}</div>
@@ -664,6 +682,10 @@ function renderCurrentView() {
     case 'projects': return renderProjects();
     case 'project-detail': return renderProjectDetail();
     case 'supervisors': return renderSupervisors();
+    case 'people': return renderPeople();
+    case 'groups': return renderGroups();
+    case 'group-profile': return renderGroupProfile();
+    case 'profile': return renderProfile();
     default: return renderDashboard();
   }
 }
@@ -691,8 +713,8 @@ function renderCoordinatorDashboard() {
           <p class="text-purple-200 text-sm mt-1">Full platform authority — manage proposals, projects & supervisors system-wide.</p>
         </div>
         <div class="flex flex-wrap gap-2">
-          <button onclick="triggerCoordinatorBroadcast()" class="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-md flex items-center gap-1.5">
-            <i class="fas fa-bullhorn"></i> Broadcast Announcement
+          <button onclick="navigate('people')" class="bg-white/10 hover:bg-white/20 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5">
+            <i class="fas fa-user-friends"></i> Students &amp; Groups
           </button>
           <button onclick="navigate('proposals')" class="bg-white/10 hover:bg-white/20 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5">
             <i class="fas fa-file-alt"></i> All Proposals
@@ -718,7 +740,7 @@ function renderCoordinatorDashboard() {
     </div>
 
     <!-- Charts Row -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
       <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
         <h3 class="font-bold text-gray-900 text-sm flex items-center gap-2 mb-3"><i class="fas fa-chart-pie text-purple-500"></i> Proposal Status</h3>
         <div class="h-52"><canvas id="proposalsChart"></canvas></div>
@@ -726,10 +748,6 @@ function renderCoordinatorDashboard() {
       <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
         <h3 class="font-bold text-gray-900 text-sm flex items-center gap-2 mb-3"><i class="fas fa-chart-bar text-emerald-500"></i> Project Health</h3>
         <div class="h-52"><canvas id="projectHealthChart"></canvas></div>
-      </div>
-      <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
-        <h3 class="font-bold text-gray-900 text-sm flex items-center gap-2 mb-3"><i class="fas fa-tasks text-indigo-500"></i> Task Overview</h3>
-        <div class="h-52"><canvas id="taskOverviewChart"></canvas></div>
       </div>
     </div>
 
@@ -755,13 +773,392 @@ function renderCoordinatorDashboard() {
     <div class="bg-gradient-to-r from-slate-900 to-purple-900 rounded-2xl p-5 border border-purple-500/20 text-white">
       <h3 class="font-bold text-sm mb-3 flex items-center gap-2"><i class="fas fa-bolt text-yellow-400"></i> Quick Executive Actions</h3>
       <div class="flex flex-wrap gap-2">
+        <button onclick="navigate('people')" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"><i class="fas fa-user-friends"></i> Manage Students &amp; Groups</button>
         <button onclick="navigate('proposals')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"><i class="fas fa-check-circle"></i> Review Proposals</button>
         <button onclick="navigate('projects')" class="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"><i class="fas fa-exclamation-triangle"></i> At-Risk Projects</button>
         <button onclick="navigate('supervisors')" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"><i class="fas fa-users"></i> Supervisor Workloads</button>
-        <button onclick="triggerCoordinatorBroadcast()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"><i class="fas fa-bullhorn"></i> Send Broadcast</button>
       </div>
     </div>
   </div>`;
+}
+
+// ===== Students & Groups Management (Coordinator) =====
+function renderPeople() {
+  return `
+  <div class="fade-in space-y-6">
+    <!-- Header -->
+    <div class="bg-gradient-to-r from-purple-900 via-indigo-900 to-slate-900 text-white rounded-2xl p-6 shadow-xl border border-purple-500/20">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <span class="inline-flex items-center gap-1.5 bg-purple-500/30 border border-purple-400/30 text-purple-200 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">
+            <i class="fas fa-user-friends"></i> People Management
+          </span>
+          <h1 class="text-2xl sm:text-3xl font-bold mt-2">Students &amp; Groups</h1>
+          <p class="text-purple-200 text-sm mt-1">View every student and group at a glance — avatars, memberships & full control.</p>
+        </div>
+        <button onclick="navigate('dashboard')" class="bg-white/10 hover:bg-white/20 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5 self-start">
+          <i class="fas fa-arrow-left"></i> Back to Dashboard
+        </button>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div id="people-stats" class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      ${Array.from({ length: 4 }).map(() => `
+        <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm animate-pulse">
+          <div class="h-9 w-20 bg-gray-200 rounded-lg"></div>
+          <div class="h-3 w-16 bg-gray-100 rounded mt-2"></div>
+        </div>`).join('')}
+    </div>
+
+    <!-- Controls (static shell — never re-rendered so focus/search stay intact) -->
+    <div class="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm flex flex-col lg:flex-row items-center gap-3">
+      <div class="flex bg-gray-100 p-1 rounded-xl gap-1">
+        ${['all', 'groups', 'students'].map(t => `
+          <button id="people-tab-${t}" onclick="setPeopleTab('${t}')" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${state.peopleTab === t ? 'bg-white text-synapse-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}">
+            ${t === 'all' ? 'All' : t.charAt(0).toUpperCase() + t.slice(1)}
+          </button>`).join('')}
+      </div>
+      <div class="relative flex-1 w-full">
+        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400"><i class="fas fa-search text-xs"></i></div>
+        <input id="people-search" value="${state.peopleSearch}" oninput="setPeopleSearch(this.value)" placeholder="Search name, email, group..." class="w-full pl-9 pr-8 py-2 bg-gray-50 border border-gray-300 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-synapse-500 focus:bg-white transition-all" />
+        ${state.peopleSearch ? `<button onclick="clearPeopleSearch()" title="Clear search" class="absolute inset-y-0 right-0 pr-3 text-gray-400 hover:text-gray-600"><i class="fas fa-times-circle text-xs"></i></button>` : ''}
+      </div>
+      <div class="flex bg-gray-100 p-1 rounded-xl gap-1">
+        <button id="people-view-grid" onclick="setPeopleView('grid')" title="Grid view" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${state.peopleView === 'grid' ? 'bg-white text-synapse-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}"><i class="fas fa-th-large"></i></button>
+        <button id="people-view-table" onclick="setPeopleView('table')" title="Table view" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${state.peopleView === 'table' ? 'bg-white text-synapse-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}"><i class="fas fa-list"></i></button>
+      </div>
+    </div>
+
+    <!-- Dynamic results -->
+    <div id="people-results" class="space-y-6">Loading...</div>
+  </div>`;
+}
+
+function renderPeopleStats(data) {
+  if (!data) return '';
+  return `
+    <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center"><i class="fas fa-user-graduate"></i></div>
+        <div>
+          <div class="text-2xl font-extrabold text-gray-900">${data.summary.total_students}</div>
+          <div class="text-xs font-semibold text-gray-500">Total Students</div>
+        </div>
+      </div>
+    </div>
+    <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center"><i class="fas fa-users"></i></div>
+        <div>
+          <div class="text-2xl font-extrabold text-gray-900">${data.summary.students_in_groups}</div>
+          <div class="text-xs font-semibold text-gray-500">In Groups</div>
+        </div>
+      </div>
+    </div>
+    <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-synapse-100 text-synapse-600 flex items-center justify-center"><i class="fas fa-people-arrows"></i></div>
+        <div>
+          <div class="text-2xl font-extrabold text-gray-900">${data.summary.total_groups}</div>
+          <div class="text-xs font-semibold text-gray-500">Groups</div>
+        </div>
+      </div>
+    </div>
+    <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center"><i class="fas fa-crown"></i></div>
+        <div>
+          <div class="text-2xl font-extrabold text-gray-900">${data.students.filter(s => s.is_leader).length}</div>
+          <div class="text-xs font-semibold text-gray-500">Group Leaders</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function peopleAvatar(u, cls) {
+  const size = cls || 'w-10 h-10 text-xs';
+  if (u && u.avatar) {
+    return `<div class="${size} rounded-xl overflow-hidden shrink-0 border border-gray-200"><img src="${u.avatar}" class="w-full h-full object-cover" /></div>`;
+  }
+  const name = (u && u.name) || '?';
+  const gradients = ['from-purple-500 to-indigo-500', 'from-emerald-500 to-teal-500', 'from-rose-500 to-pink-500', 'from-blue-500 to-cyan-500', 'from-amber-500 to-orange-500'];
+  const g = gradients[(name.charCodeAt(0) || 0) % gradients.length];
+  return `<div class="${size} rounded-xl shrink-0 bg-gradient-to-br ${g} flex items-center justify-center text-white font-bold">${name.charAt(0)}</div>`;
+}
+
+function peopleLeaderBadge() {
+  return `<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-lg text-[9px] font-bold bg-amber-100 text-amber-700 border border-amber-200 uppercase tracking-wide"><i class="fas fa-crown text-[8px]"></i>Leader</span>`;
+}
+
+function peopleStatusBadge(s) {
+  const map = {
+    approved: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    pending: 'bg-amber-100 text-amber-700 border-amber-200',
+    rejected: 'bg-rose-100 text-rose-700 border-rose-200',
+  };
+  const color = map[s] || 'bg-gray-100 text-gray-600 border-gray-200';
+  return `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border capitalize ${color}">${s || 'unknown'}</span>`;
+}
+
+function renderPeopleGroupsSection(groups) {
+  if (!groups.length) return '';
+  const grid = state.peopleView === 'grid';
+  return `
+  <div class="space-y-3">
+    <div class="flex items-center justify-between">
+      <h3 class="font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-users text-indigo-500"></i> Groups <span class="text-[11px] font-semibold text-gray-400">(${groups.length})</span></h3>
+    </div>
+    ${grid ? `
+    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+      ${groups.map(g => `
+      <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm hover:shadow-md transition-all space-y-3">
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex items-center gap-2 min-w-0">
+            <div class="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0"><i class="fas fa-people-arrows text-sm"></i></div>
+            <div class="min-w-0">
+              <p class="text-xs font-bold text-gray-900 truncate">${g.name}</p>
+              <p class="text-[10px] text-gray-400">${g.members.length} member${g.members.length === 1 ? '' : 's'}</p>
+            </div>
+          </div>
+          <button onclick="deletePeopleGroup('${g.id}')" title="Delete group" class="text-gray-300 hover:text-rose-600 hover:bg-rose-50 p-2 rounded-lg transition-all shrink-0"><i class="fas fa-trash text-sm"></i></button>
+        </div>
+        ${peopleStatusBadge(g.status)}
+        <div class="border-t border-gray-100 pt-3 space-y-2">
+          ${g.members.map(m => `
+          <div class="flex items-center gap-2.5 ${m.is_leader ? 'bg-amber-50 rounded-xl px-2 py-1.5 -mx-2' : ''}">
+            ${peopleAvatar(m, 'w-8 h-8 text-[10px]')}
+            <div class="min-w-0 flex-1">
+              <p class="text-xs font-semibold text-gray-800 truncate">${m.name}</p>
+              <p class="text-[10px] text-gray-400 truncate">${m.email}</p>
+            </div>
+            ${m.is_leader ? peopleLeaderBadge() : ''}
+          </div>`).join('')}
+        </div>
+      </div>`).join('')}
+    </div>
+    ` : `
+    <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-x-auto">
+      <table class="w-full text-left">
+        <thead class="bg-gray-50 border-b border-gray-200">
+          <tr class="text-[10px] uppercase tracking-wider text-gray-500">
+            <th class="px-4 py-3 font-bold">Group</th>
+            <th class="px-4 py-3 font-bold">Leader</th>
+            <th class="px-4 py-3 font-bold">Members</th>
+            <th class="px-4 py-3 font-bold">Status</th>
+            <th class="px-4 py-3 font-bold text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          ${groups.map(g => `
+          <tr class="hover:bg-gray-50/60 transition-colors">
+            <td class="px-4 py-3">
+              <p class="text-xs font-bold text-gray-900">${g.name}</p>
+            </td>
+            <td class="px-4 py-3">
+              <div class="flex items-center gap-2">
+                ${peopleAvatar(g, 'w-7 h-7 text-[10px]')}
+                <span class="text-xs font-semibold text-gray-700">${g.leader_name}</span>
+                ${peopleLeaderBadge()}
+              </div>
+            </td>
+            <td class="px-4 py-3">
+              <div class="flex items-center -space-x-2">
+                ${g.members.slice(0, 4).map(m => m.avatar
+                  ? `<div class="w-7 h-7 rounded-full ring-2 ring-white overflow-hidden"><img src="${m.avatar}" class="w-full h-full object-cover" /></div>`
+                  : `<div class="w-7 h-7 rounded-full ring-2 ring-white bg-gradient-to-br ${['from-purple-500 to-indigo-500','from-emerald-500 to-teal-500','from-rose-500 to-pink-500','from-blue-500 to-cyan-500'][(m.name.charCodeAt(0) || 0) % 4]} flex items-center justify-center text-white text-[9px] font-bold">${m.name.charAt(0)}</div>`).join('')}
+                ${g.members.length > 4 ? `<span class="w-7 h-7 rounded-full ring-2 ring-white bg-gray-200 text-gray-600 text-[9px] font-bold flex items-center justify-center">+${g.members.length - 4}</span>` : ''}
+              </div>
+              <span class="text-[10px] text-gray-400 ml-2">${g.members.map(m => m.name).join(', ')}</span>
+            </td>
+            <td class="px-4 py-3">${peopleStatusBadge(g.status)}</td>
+            <td class="px-4 py-3 text-right">
+              <button onclick="deletePeopleGroup('${g.id}')" title="Delete group" class="text-gray-300 hover:text-rose-600 hover:bg-rose-50 p-2 rounded-lg transition-all"><i class="fas fa-trash"></i></button>
+            </td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    `}
+  </div>`;
+}
+
+function renderPeopleStudentsSection(students) {
+  if (!students.length) return '';
+  const grid = state.peopleView === 'grid';
+  return `
+  <div class="space-y-3">
+    <div class="flex items-center justify-between">
+      <h3 class="font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-user-graduate text-emerald-500"></i> Students <span class="text-[11px] font-semibold text-gray-400">(${students.length})</span></h3>
+    </div>
+    ${grid ? `
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      ${students.map(s => `
+      <div class="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm hover:shadow-md transition-all flex items-start gap-3">
+        ${peopleAvatar(s, 'w-12 h-12 text-base')}
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-1.5 flex-wrap">
+            <p class="text-sm font-bold text-gray-900 truncate">${s.name}</p>
+            ${s.is_leader ? peopleLeaderBadge() : ''}
+          </div>
+          <p class="text-[11px] text-gray-500 truncate">${s.email}</p>
+          <p class="text-[10px] text-gray-400 mt-0.5 flex items-center gap-1"><i class="fas fa-building"></i> ${s.department || 'No department'}</p>
+          <div class="mt-2">
+            ${s.group_name
+              ? `<span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100"><i class="fas fa-users"></i>${s.group_name} <span class="text-[9px] font-semibold text-indigo-400">(${s.member_count} members)</span></span>`
+              : `<span class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold bg-gray-100 text-gray-500 border border-gray-200"><i class="fas fa-user-slash"></i>No group</span>`}
+          </div>
+        </div>
+        <button onclick="deletePeopleStudent('${s.id}','${s.name}')" title="Delete student" class="text-gray-300 hover:text-rose-600 hover:bg-rose-50 p-2 rounded-lg transition-all shrink-0"><i class="fas fa-trash text-sm"></i></button>
+      </div>`).join('')}
+    </div>
+    ` : `
+    <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-x-auto">
+      <table class="w-full text-left">
+        <thead class="bg-gray-50 border-b border-gray-200">
+          <tr class="text-[10px] uppercase tracking-wider text-gray-500">
+            <th class="px-4 py-3 font-bold">Student</th>
+            <th class="px-4 py-3 font-bold">Email</th>
+            <th class="px-4 py-3 font-bold">Department</th>
+            <th class="px-4 py-3 font-bold">Group</th>
+            <th class="px-4 py-3 font-bold text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          ${students.map(s => `
+          <tr class="hover:bg-gray-50/60 transition-colors">
+            <td class="px-4 py-3">
+              <div class="flex items-center gap-2.5">
+                ${peopleAvatar(s, 'w-9 h-9 text-xs')}
+                <div class="min-w-0">
+                  <p class="text-xs font-bold text-gray-900 truncate flex items-center gap-1.5">${s.name} ${s.is_leader ? peopleLeaderBadge() : ''}</p>
+                </div>
+              </div>
+            </td>
+            <td class="px-4 py-3 text-xs text-gray-600">${s.email}</td>
+            <td class="px-4 py-3 text-xs text-gray-600">${s.department || '—'}</td>
+            <td class="px-4 py-3">
+              ${s.group_name
+                ? `<span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100"><i class="fas fa-users"></i>${s.group_name}</span>`
+                : `<span class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold bg-gray-100 text-gray-500 border border-gray-200"><i class="fas fa-user-slash"></i>No group</span>`}
+            </td>
+            <td class="px-4 py-3 text-right">
+              <button onclick="deletePeopleStudent('${s.id}','${s.name}')" title="Delete student" class="text-gray-300 hover:text-rose-600 hover:bg-rose-50 p-2 rounded-lg transition-all"><i class="fas fa-trash"></i></button>
+            </td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    `}
+  </div>`;
+}
+
+function renderPeopleResults() {
+  const data = state.people;
+  const container = document.getElementById('people-results');
+  if (!container || !data) return;
+  if (!data.students.length && !data.groups.length) {
+    container.innerHTML = `
+      <p class="bg-white rounded-2xl border border-gray-200 p-10 text-center text-sm text-gray-400 flex flex-col items-center gap-2">
+        <i class="fas fa-user-friends text-3xl text-gray-300"></i> No students or groups found yet.
+      </p>`;
+    return;
+  }
+
+  const q = (state.peopleSearch || '').trim().toLowerCase();
+  const filterGroups = data.groups.filter(g =>
+    !q || (g.name || '').toLowerCase().includes(q) || (g.leader_name || '').toLowerCase().includes(q) || g.members.some(m => (m.name || '').toLowerCase().includes(q))
+  );
+  const filterStudents = data.students.filter(s =>
+    !q || (s.name || '').toLowerCase().includes(q) || (s.email || '').toLowerCase().includes(q) || (s.group_name || '').toLowerCase().includes(q) || (s.department || '').toLowerCase().includes(q)
+  );
+
+  const showAll = state.peopleTab === 'all';
+  const showGroups = showAll || state.peopleTab === 'groups';
+  const showStudents = showAll || state.peopleTab === 'students';
+
+  const totalShown = (showGroups ? filterGroups.length : 0) + (showStudents ? filterStudents.length : 0);
+
+  container.innerHTML = `
+    <div class="flex items-center justify-between flex-wrap gap-2">
+      <p class="text-[11px] text-gray-400 font-medium">
+        ${q ? `Searching for "<span class="text-synapse-700 font-bold">${escapeHtml(state.peopleSearch)}</span>" — ` : ''}${totalShown} result${totalShown === 1 ? '' : 's'}
+      </p>
+    </div>
+    ${showGroups ? (filterGroups.length ? renderPeopleGroupsSection(filterGroups) : '<p class="text-xs text-gray-400 bg-white rounded-2xl border border-gray-200 p-6 text-center">No groups match your search.</p>') : ''}
+    ${showStudents ? (filterStudents.length ? renderPeopleStudentsSection(filterStudents) : '<p class="text-xs text-gray-400 bg-white rounded-2xl border border-gray-200 p-6 text-center">No students match your search.</p>') : ''}
+  `;
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+async function loadPeople() {
+  if (!state.currentUser || state.currentUser.role !== 'coordinator') return;
+  try {
+    const res = await api('/dashboard/people');
+    state.people = res.data;
+    const stats = document.getElementById('people-stats');
+    if (stats) stats.innerHTML = renderPeopleStats(res.data);
+    renderPeopleResults();
+  } catch (e) {
+    const container = document.getElementById('people-results');
+    if (container) container.innerHTML = '<p class="text-sm text-rose-500">Failed to load students & groups.</p>';
+  }
+}
+
+function setPeopleTab(tab) {
+  state.peopleTab = tab;
+  const active = 'bg-white text-synapse-700 shadow-sm';
+  const inactive = 'text-gray-500 hover:text-gray-800';
+  ['all', 'groups', 'students'].forEach(t => {
+    const btn = document.getElementById(`people-tab-${t}`);
+    if (btn) btn.className = `px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${t === tab ? active : inactive}`;
+  });
+  renderPeopleResults();
+}
+
+function setPeopleView(view) {
+  state.peopleView = view;
+  const active = 'bg-white text-synapse-700 shadow-sm';
+  const inactive = 'text-gray-500 hover:text-gray-800';
+  const gridBtn = document.getElementById('people-view-grid');
+  const tableBtn = document.getElementById('people-view-table');
+  if (gridBtn) gridBtn.className = `px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${view === 'grid' ? active : inactive}`;
+  if (tableBtn) tableBtn.className = `px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${view === 'table' ? active : inactive}`;
+  renderPeopleResults();
+}
+
+function setPeopleSearch(value) {
+  state.peopleSearch = value;
+  renderPeopleResults();
+}
+
+function clearPeopleSearch() {
+  state.peopleSearch = '';
+  const input = document.getElementById('people-search');
+  if (input) input.value = '';
+  renderPeopleResults();
+  if (input) input.focus();
+}
+
+async function deletePeopleStudent(userId, name) {
+  if (!confirm(`Delete student "${name}"?\n\nThis permanently removes their account, group memberships, proposals and any linked projects. This cannot be undone.`)) return;
+  try {
+    const res = await api(`/users/${userId}`, { method: 'DELETE' });
+    showToast(res.message || 'Student deleted', 'success');
+    await loadPeople();
+  } catch (e) { /* handled by api helper */ }
+}
+
+async function deletePeopleGroup(groupId) {
+  if (!confirm('Delete this group?\n\nAll members will be removed and any linked proposals/projects will be permanently deleted. This cannot be undone.')) return;
+  try {
+    const res = await api(`/groups/${groupId}`, { method: 'DELETE' });
+    showToast(res.message || 'Group deleted', 'success');
+    await loadPeople();
+  } catch (e) { /* handled by api helper */ }
 }
 
 // ===== SUPERVISOR Dashboard =====
@@ -776,7 +1173,7 @@ function renderSupervisorDashboard() {
             <i class="fas fa-user-tie"></i> Supervisor Portal
           </span>
           <h1 class="text-2xl sm:text-3xl font-bold mt-2">Academic Oversight Hub</h1>
-          <p class="text-blue-200 text-sm mt-1">Monitor your assigned projects, manage tasks and schedule student meetings.</p>
+          <p class="text-blue-200 text-sm mt-1">Monitor your assigned projects and approve proposals.</p>
         </div>
         <div class="flex flex-wrap gap-2">
           <button onclick="navigate('projects')" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-md flex items-center gap-1.5">
@@ -792,15 +1189,15 @@ function renderSupervisorDashboard() {
     <!-- KPI Stats -->
     <div id="dashboard-stats" class="grid grid-cols-2 lg:grid-cols-4 gap-4">${renderStatsSkeleton()}</div>
 
-    <!-- Charts: Task + Health -->
+    <!-- Chart: Health -->
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
-        <h3 class="font-bold text-gray-900 text-sm flex items-center gap-2 mb-3"><i class="fas fa-tasks text-blue-500"></i> Task Status Across Projects</h3>
-        <div class="h-56"><canvas id="taskOverviewChart"></canvas></div>
-      </div>
       <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
         <h3 class="font-bold text-gray-900 text-sm flex items-center gap-2 mb-3"><i class="fas fa-chart-bar text-emerald-500"></i> Project Health Status</h3>
         <div class="h-56"><canvas id="projectHealthChart"></canvas></div>
+      </div>
+      <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+        <h3 class="font-bold text-gray-900 text-sm flex items-center gap-2 mb-3"><i class="fas fa-chart-pie text-purple-500"></i> Proposal Status</h3>
+        <div class="h-56"><canvas id="proposalsChart"></canvas></div>
       </div>
     </div>
 
@@ -826,8 +1223,8 @@ function renderSupervisorDashboard() {
     <div class="bg-gradient-to-r from-slate-900 to-blue-900 rounded-2xl p-5 border border-blue-500/20 text-white">
       <h3 class="font-bold text-sm mb-3 flex items-center gap-2"><i class="fas fa-bolt text-yellow-400"></i> Supervisor Quick Actions</h3>
       <div class="flex flex-wrap gap-2">
-        <button onclick="navigate('projects')" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"><i class="fas fa-plus-circle"></i> Assign Tasks</button>
-        <button onclick="navigate('proposals')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"><i class="fas fa-lightbulb"></i> Write Feedback</button>
+        <button onclick="navigate('projects')" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"><i class="fas fa-stethoscope"></i> Override Project Health</button>
+        <button onclick="navigate('proposals')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"><i class="fas fa-check-circle"></i> Approve Proposals</button>
         <button onclick="navigate('supervisors')" class="bg-synapse-600 hover:bg-synapse-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"><i class="fas fa-users"></i> Colleagues</button>
       </div>
     </div>
@@ -846,7 +1243,7 @@ function renderStudentDashboard() {
             <i class="fas fa-user-graduate"></i> Student Workspace
           </span>
           <h1 class="text-2xl sm:text-3xl font-bold mt-2">My FYP Dashboard</h1>
-          <p class="text-emerald-200 text-sm mt-1">Track your proposal progress, project tasks, and upcoming milestones.</p>
+          <p class="text-emerald-200 text-sm mt-1">Track your proposal progress and active project health.</p>
         </div>
         <div class="flex flex-wrap gap-2">
           <button onclick="showNewProposalForm(); navigate('proposals')" class="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-md flex items-center gap-1.5">
@@ -880,12 +1277,8 @@ function renderStudentDashboard() {
       </div>
     </div>
 
-    <!-- Task Progress Chart -->
+    <!-- Proposal Status Chart -->
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
-        <h3 class="font-bold text-gray-900 text-sm flex items-center gap-2 mb-3"><i class="fas fa-tasks text-emerald-500"></i> My Task Progress</h3>
-        <div class="h-52"><canvas id="taskOverviewChart"></canvas></div>
-      </div>
       <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
         <h3 class="font-bold text-gray-900 text-sm flex items-center gap-2 mb-3"><i class="fas fa-chart-pie text-teal-500"></i> Proposal Status</h3>
         <div class="h-52"><canvas id="proposalsChart"></canvas></div>
@@ -898,7 +1291,7 @@ function renderStudentDashboard() {
       <p class="text-emerald-200 text-xs mb-3">Use AI tools to strengthen your proposal before submission.</p>
       <div class="flex flex-wrap gap-2">
         <button onclick="navigate('proposals')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"><i class="fas fa-plus"></i> New Proposal</button>
-        <button onclick="navigate('projects')" class="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"><i class="fas fa-tasks"></i> View Tasks</button>
+        <button onclick="navigate('projects')" class="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"><i class="fas fa-folder-open"></i> My Project</button>
         <button onclick="navigate('supervisors')" class="bg-slate-600 hover:bg-slate-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"><i class="fas fa-users"></i> Find Supervisor</button>
       </div>
     </div>
@@ -925,13 +1318,14 @@ function renderProposals() {
         <p class="text-gray-500 text-xs sm:text-sm mt-0.5">Manage and evaluate FYP project submissions</p>
       </div>
       ${state.currentUser && state.currentUser.role === 'student' ? `
-      <button onclick="showNewProposalForm()" class="bg-synapse-600 hover:bg-synapse-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-synapse-500/20 transition-all flex items-center justify-center gap-2">
+      <button onclick="showNewProposalForm()" class="bg-synapse-600 hover:bg-synapse-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-synapse-500/20 transition-all flex items-center justify-center gap-2 shrink-0">
         <i class="fas fa-plus"></i>
         <span>New Proposal</span>
       </button>
       ` : ''}
     </div>
 
+    ${state.currentUser && state.currentUser.role === 'student' ? '<div id="proposal-group-banner"></div>' : ''}
     <div id="proposals-list" class="space-y-3">Loading...</div>
   </div>`;
 }
@@ -956,8 +1350,8 @@ function renderProposalDetail() {
       <i class="fas fa-arrow-left text-xs"></i> Back to Proposals
     </button>
 
-    <!-- EXECUTIVE POWER CONTROLS FOR COORDINATOR -->
-    ${state.currentUser.role === 'coordinator' ? `
+    <!-- EXECUTIVE POWER CONTROLS FOR COORDINATOR & SUPERVISOR -->
+    ${['coordinator', 'supervisor'].includes(state.currentUser.role) ? `
     <div class="bg-gradient-to-r from-slate-900 to-indigo-900 text-white rounded-2xl p-4 sm:p-5 shadow-xl border border-indigo-500/30 space-y-4">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div class="flex items-start sm:items-center gap-3 min-w-0 flex-1">
@@ -965,7 +1359,7 @@ function renderProposalDetail() {
             <i class="fas fa-crown"></i>
           </div>
           <div class="min-w-0 flex-1">
-            <h3 class="font-bold text-sm sm:text-base text-white">Coordinator Approval & Authorization Panel</h3>
+            <h3 class="font-bold text-sm sm:text-base text-white">Approval & Authorization Panel</h3>
             <p class="text-xs text-indigo-200 leading-snug mt-0.5">Execute official decision on this FYP proposal</p>
           </div>
         </div>
@@ -984,7 +1378,8 @@ function renderProposalDetail() {
         </button>
       </div>
 
-      <!-- Supervisor Allocation Control -->
+      <!-- Supervisor Allocation Control (Coordinator only) -->
+      ${state.currentUser.role === 'coordinator' ? `
       <div class="flex flex-col sm:flex-row sm:items-center gap-2 pt-3 border-t border-indigo-800/60">
         <span class="text-xs font-semibold text-indigo-200 shrink-0"><i class="fas fa-user-tie text-amber-400 mr-1"></i>Assign Supervisor:</span>
         <select id="proposal-supervisor-select" class="w-full sm:w-auto flex-1 bg-slate-800 border border-indigo-500/40 text-white text-xs rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400">
@@ -997,12 +1392,13 @@ function renderProposalDetail() {
           <i class="fas fa-user-plus"></i> Assign Supervisor
         </button>
       </div>
+      ` : ''}
     </div>
     ` : ''}
 
     <!-- SUPERVISOR POWER CONTROLS FOR SUPERVISORS -->
     ${state.currentUser.role === 'supervisor' ? `
-    <div class="bg-gradient-to-r from-blue-950 to-synapse-950 text-white rounded-2xl p-5 shadow-xl border border-synapse-500/30 space-y-3">
+    <div class="bg-gradient-to-r from-blue-950 to-synapse-900 text-white rounded-2xl p-5 shadow-xl border border-synapse-500/30 space-y-3">
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2">
           <div class="w-8 h-8 bg-synapse-500 rounded-xl flex items-center justify-center text-white text-sm shadow-md">
@@ -1017,9 +1413,6 @@ function renderProposalDetail() {
       </div>
 
       <div class="flex flex-wrap gap-2 pt-2 border-t border-synapse-800/60">
-        <button onclick="endorseProposal('${p.id}')" class="bg-synapse-600 hover:bg-synapse-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-md">
-          <i class="fas fa-thumbs-up"></i> Endorse for Approval
-        </button>
         <button onclick="runFeedbackAssistant('${p.id}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-md">
           <i class="fas fa-lightbulb"></i> Generate Structured Review Notes
         </button>
@@ -1033,7 +1426,16 @@ function renderProposalDetail() {
           <h1 class="text-xl sm:text-2xl font-bold text-gray-900">${p.title}</h1>
           <p class="text-xs sm:text-sm text-gray-500 mt-1 flex items-center gap-2">
             <span><i class="fas fa-user text-gray-400 mr-1"></i>Submitted by ${p.submitter_name || 'Unknown'}</span>
+            ${p.group_name ? `<span class="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-synapse-50 text-synapse-700 border border-synapse-100"><i class="fas fa-users mr-1"></i>Group: ${p.group_name}</span>` : ''}
           </p>
+          ${p.groupMembers && p.groupMembers.length ? `
+          <div class="mt-3 flex flex-wrap items-center gap-2">
+            <span class="text-[11px] font-bold text-gray-500 uppercase tracking-wider"><i class="fas fa-users text-synapse-500 mr-1"></i>Team:</span>
+            ${p.groupMembers.map(m => `
+              <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold ${m.is_leader ? 'bg-amber-50 border border-amber-200 text-amber-700' : 'bg-synapse-50 border border-synapse-100 text-synapse-700'}">
+                ${m.is_leader ? '<i class="fas fa-crown text-amber-500"></i>' : '<i class="fas fa-user text-synapse-400"></i>'}${m.name}
+              </span>`).join('')}
+          </div>` : ''}
         </div>
         <span class="self-start px-3 py-1 rounded-full text-xs font-bold border ${statusColors[p.status] || 'bg-gray-100'} uppercase tracking-wider">
           ${p.status.replace('_', ' ')}
@@ -1138,6 +1540,7 @@ function renderProjectDetail() {
 
   const healthColors = { healthy: 'bg-emerald-100 text-emerald-700 border-emerald-200', at_risk: 'bg-amber-100 text-amber-700 border-amber-200', critical: 'bg-rose-100 text-rose-700 border-rose-200' };
   const healthIcons = { healthy: 'fa-check-circle text-emerald-500', at_risk: 'fa-exclamation-triangle text-amber-500', critical: 'fa-times-circle text-rose-500' };
+  const isStudentMember = state.currentUser.role === 'student' && (p.members || []).some(m => m.id === state.currentUser.id);
 
   return `
   <div class="fade-in space-y-6">
@@ -1145,8 +1548,8 @@ function renderProjectDetail() {
       <i class="fas fa-arrow-left text-xs"></i> Back to Projects
     </button>
 
-    <!-- EXECUTIVE POWER CONTROLS FOR COORDINATOR -->
-    ${state.currentUser.role === 'coordinator' ? `
+    <!-- EXECUTIVE POWER CONTROLS FOR COORDINATOR & SUPERVISOR -->
+    ${['coordinator', 'supervisor'].includes(state.currentUser.role) ? `
     <div class="bg-gradient-to-r from-slate-900 to-indigo-900 text-white rounded-2xl p-4 sm:p-5 shadow-xl border border-indigo-500/30 space-y-4">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div class="flex items-start sm:items-center gap-3 min-w-0 flex-1">
@@ -1154,8 +1557,8 @@ function renderProjectDetail() {
             <i class="fas fa-crown"></i>
           </div>
           <div class="min-w-0 flex-1">
-            <h3 class="font-bold text-sm sm:text-base text-white">Coordinator Project Governance</h3>
-            <p class="text-xs text-indigo-200 leading-snug mt-0.5">Force override health flags or progress metrics</p>
+            <h3 class="font-bold text-sm sm:text-base text-white">Project Governance</h3>
+            <p class="text-xs text-indigo-200 leading-snug mt-0.5">Force override health flags</p>
           </div>
         </div>
         <span class="text-[10px] bg-indigo-500/30 border border-indigo-400/40 text-indigo-200 px-2.5 py-1 rounded-full font-bold uppercase tracking-wider shrink-0 whitespace-nowrap self-start sm:self-auto">Executive Power</span>
@@ -1174,7 +1577,8 @@ function renderProjectDetail() {
         </button>
       </div>
 
-      <!-- Supervisor Allocation Control -->
+      <!-- Supervisor Allocation Control (Coordinator only) -->
+      ${state.currentUser.role === 'coordinator' ? `
       <div class="flex flex-col sm:flex-row sm:items-center gap-2 pt-3 border-t border-indigo-800/60">
         <span class="text-xs font-semibold text-indigo-200 shrink-0"><i class="fas fa-user-tie text-amber-400 mr-1"></i>Change Supervisor:</span>
         <select id="project-supervisor-select" class="w-full sm:w-auto flex-1 bg-slate-800 border border-indigo-500/40 text-white text-xs rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400">
@@ -1187,33 +1591,7 @@ function renderProjectDetail() {
           <i class="fas fa-user-check"></i> Update Supervisor
         </button>
       </div>
-    </div>
-    ` : ''}
-
-    <!-- MANAGEMENT STATION FOR SUPERVISORS -->
-    ${state.currentUser.role === 'supervisor' ? `
-    <div class="bg-gradient-to-r from-blue-950 to-synapse-950 text-white rounded-2xl p-4 sm:p-5 shadow-xl border border-synapse-500/30 space-y-4">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div class="flex items-start sm:items-center gap-3 min-w-0 flex-1">
-          <div class="w-9 h-9 bg-synapse-500 rounded-xl flex items-center justify-center text-white text-sm shadow-md shrink-0">
-            <i class="fas fa-user-tie"></i>
-          </div>
-          <div class="min-w-0 flex-1">
-            <h3 class="font-bold text-sm sm:text-base text-white">Supervisor Management Station</h3>
-            <p class="text-xs text-synapse-200 leading-snug mt-0.5">Assign student tasks or schedule review meetings</p>
-          </div>
-        </div>
-        <span class="text-[10px] bg-synapse-500/30 border border-synapse-400/40 text-synapse-200 px-2.5 py-1 rounded-full font-bold uppercase tracking-wider shrink-0 whitespace-nowrap self-start sm:self-auto">Supervisor Power</span>
-      </div>
-
-      <div class="flex flex-col sm:flex-row gap-2 pt-3 border-t border-synapse-800/60">
-        <button onclick="showAddTaskModal('${p.id}')" class="w-full sm:w-auto bg-synapse-600 hover:bg-synapse-700 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-md">
-          <i class="fas fa-plus-circle"></i> Assign Student Task
-        </button>
-        <button onclick="scheduleSupervisorMeeting('${p.id}')" class="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-md">
-          <i class="fas fa-calendar-plus"></i> Schedule Review Meeting
-        </button>
-      </div>
+      ` : ''}
     </div>
     ` : ''}
 
@@ -1229,14 +1607,111 @@ function renderProjectDetail() {
         </span>
       </div>
 
-      <div class="pt-2">
-        <div class="flex items-center justify-between text-xs font-semibold text-gray-700 mb-1">
-          <span>Overall Progress</span>
-          <span>${p.progress || 0}%</span>
+    </div>
+
+    <!-- Project Progress Tracker -->
+    <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm space-y-4">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <h3 class="font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-chart-line text-synapse-500"></i> Project Progress Tracker</h3>
+        <span class="text-[11px] font-bold px-2.5 py-1 rounded-full ${(p.progress || 0) >= 100 ? 'bg-emerald-100 text-emerald-700' : (p.progress || 0) >= 50 ? 'bg-sky-100 text-sky-700' : 'bg-amber-100 text-amber-700'}">${p.progress || 0}% Complete</span>
+      </div>
+
+      <div class="flex items-center justify-between text-xs font-semibold text-gray-600 mb-1">
+        <span>Work Completed</span>
+        <span>${100 - (p.progress || 0)}% remaining</span>
+      </div>
+      <div class="w-full bg-gray-100 rounded-full h-3.5 p-0.5 border">
+        <div class="bg-gradient-to-r from-synapse-500 to-indigo-600 h-full rounded-full transition-all duration-500" style="width: ${p.progress || 0}%"></div>
+      </div>
+
+      ${isStudentMember ? `
+      <div class="pt-3 border-t border-gray-100">
+        <div class="flex items-center justify-between text-xs font-semibold text-gray-700 mb-2">
+          <span>Report Your Progress</span>
+          <span id="progress-preview" class="text-synapse-700">${p.progress || 0}% done &bull; ${100 - (p.progress || 0)}% left</span>
         </div>
-        <div class="w-full bg-gray-100 rounded-full h-3 p-0.5 border">
-          <div class="bg-gradient-to-r from-synapse-500 to-indigo-600 h-full rounded-full transition-all duration-500" style="width: ${p.progress || 0}%"></div>
+        <input id="project-progress-slider" type="range" min="0" max="100" step="1" value="${p.progress || 0}"
+               oninput="document.getElementById('progress-preview').textContent = this.value + '% done &bull; ' + (100 - parseInt(this.value)) + '% left'"
+               class="w-full accent-synapse-600">
+        <button onclick="updateProjectProgress('${p.id}')" class="mt-2 w-full sm:w-auto bg-synapse-600 hover:bg-synapse-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-md">
+          <i class="fas fa-save"></i> Update Progress
+        </button>
+      </div>
+      ` : ''}
+    </div>
+
+    <!-- Project Links -->
+    <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm space-y-4">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <h3 class="font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-link text-synapse-500"></i> Project Links</h3>
+        ${isStudentMember ? `<button onclick="toggleLinkForm()" class="bg-synapse-600 hover:bg-synapse-700 text-white px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"><i class="fas fa-plus"></i> Add Link</button>` : ''}
+      </div>
+      <div id="link-form" class="hidden space-y-2">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <input id="link-label" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" placeholder="Label (e.g. GitHub Repo)" />
+          <input id="link-url" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" placeholder="https://..." />
         </div>
+        <button onclick="addProjectLink('${p.id}')" class="bg-synapse-600 hover:bg-synapse-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-md"><i class="fas fa-save mr-1"></i>Save Link</button>
+      </div>
+      <div class="space-y-2">
+        ${(p.links || []).length ? p.links.map(l => `
+          <div class="flex items-center justify-between gap-3 p-3 rounded-xl border border-gray-100 bg-gray-50">
+            <a href="${l.url}" target="_blank" rel="noopener" class="text-xs font-semibold text-synapse-700 hover:underline truncate flex items-center gap-2 min-w-0"><i class="fas fa-external-link-alt text-[10px] shrink-0"></i><span class="truncate">${l.label}</span></a>
+            ${isStudentMember ? `<button onclick="deleteProjectLink('${p.id}','${l.id}')" class="text-gray-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 shrink-0" title="Remove"><i class="fas fa-trash text-xs"></i></button>` : ''}
+          </div>
+        `).join('') : '<p class="text-xs text-gray-400">No links added yet.</p>'}
+      </div>
+    </div>
+
+    <!-- Project Gallery -->
+    <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm space-y-4">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <h3 class="font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-images text-synapse-500"></i> Screenshots & Gallery</h3>
+        ${isStudentMember ? `
+        <div class="flex flex-wrap gap-2 items-center">
+          <span class="text-[11px] text-gray-400 flex items-center gap-1"><i class="fas fa-keyboard"></i> Ctrl+V to paste screenshot</span>
+          <button onclick="document.getElementById('gallery-file-input').click()" class="bg-synapse-600 hover:bg-synapse-700 text-white px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"><i class="fas fa-upload"></i> Upload Image</button>
+        </div>` : ''}
+      </div>
+      <input type="file" id="gallery-file-input" accept="image/*" class="hidden" onchange="handleGalleryUpload('${p.id}', event)" />
+      ${isStudentMember ? `<input id="gallery-caption" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" placeholder="Caption for next upload (optional)" />` : ''}
+      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+        ${(p.media || []).length ? p.media.map(m => `
+          <div class="group relative rounded-xl overflow-hidden border border-gray-200 bg-gray-100 cursor-pointer" onclick="openLightbox('${p.id}', '${m.id}')">
+            <img src="${m.data}" alt="${m.caption || 'screenshot'}" class="w-full h-32 object-cover hover:opacity-90 transition-opacity" />
+            ${isStudentMember ? `<button onclick="event.stopPropagation(); deleteProjectMedia('${p.id}','${m.id}')" class="absolute top-1.5 right-1.5 w-7 h-7 bg-black/60 text-white rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-rose-600" title="Delete"><i class="fas fa-trash text-[10px]"></i></button>` : ''}
+            ${(m.feedback || []).length ? `<span class="absolute bottom-1.5 left-1.5 bg-black/60 text-white text-[10px] font-bold px-2 py-0.5 rounded-lg flex items-center gap-1"><i class="fas fa-comment"></i>${m.feedback.length}</span>` : ''}
+            ${m.caption ? `<div class="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent text-white text-[10px] px-2 py-1.5 truncate pointer-events-none">${m.caption}</div>` : ''}
+          </div>
+        `).join('') : '<p class="text-xs text-gray-400 col-span-full">No screenshots uploaded yet. Students can upload or paste screenshots with Ctrl+V.</p>'}
+      </div>
+    </div>
+
+    <!-- Overall Project Feedback -->
+    <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm space-y-4">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <h3 class="font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-comments text-synapse-500"></i> Overall Project Feedback</h3>
+        <span class="text-[11px] text-gray-400">By Coordinator / Supervisor</span>
+      </div>
+      ${['coordinator', 'supervisor'].includes(state.currentUser.role) ? `
+      <div class="flex flex-col sm:flex-row gap-2">
+        <input id="overall-feedback-input" class="flex-1 border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" placeholder="Write feedback for the project team..." />
+        <button onclick="addOverallFeedback('${p.id}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"><i class="fas fa-paper-plane"></i> Post</button>
+      </div>` : ''}
+      <div class="space-y-3">
+        ${(p.overallFeedback || []).length ? p.overallFeedback.map(f => `
+          <div class="flex items-start gap-3 p-3 rounded-xl border ${f.author_role === 'coordinator' ? 'bg-purple-50 border-purple-100' : 'bg-blue-50 border-blue-100'}">
+            <div class="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 ${f.author_role === 'coordinator' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}">${(f.author_name || '?').charAt(0)}</div>
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-xs font-bold text-gray-900">${f.author_name}</span>
+                <span class="text-[9px] px-1.5 py-0.5 rounded-full uppercase font-bold ${f.author_role === 'coordinator' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}">${f.author_role}</span>
+                <span class="text-[10px] text-gray-400">${new Date(f.created_at).toLocaleString()}</span>
+              </div>
+              <p class="text-xs text-gray-700 mt-1 leading-relaxed">${f.message}</p>
+            </div>
+          </div>
+        `).join('') : '<p class="text-xs text-gray-400">No feedback yet.</p>'}
       </div>
     </div>
 
@@ -1296,7 +1771,7 @@ function renderProjectDetail() {
         AI Project Assistant
       </h3>
       <div class="flex flex-col sm:flex-row gap-2">
-        <input type="text" id="project-query-input" placeholder="Ask about this project (e.g., 'What are the overdue tasks?')" 
+        <input type="text" id="project-query-input" placeholder="Ask about this project (e.g., 'What is the current health status?')" 
                class="flex-1 border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-synapse-500" 
                onkeydown="if(event.key==='Enter')runProjectQuery('${p.id}')">
         <button onclick="runProjectQuery('${p.id}')" class="bg-synapse-600 hover:bg-synapse-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold transition-all">
@@ -1306,52 +1781,7 @@ function renderProjectDetail() {
       <div id="project-query-result"></div>
     </div>
 
-    <!-- Tasks & Milestones -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-tasks text-gray-400"></i>Tasks</h3>
-          ${state.currentUser.role === 'supervisor' ? `<button onclick="showAddTaskModal('${p.id}')" class="text-xs bg-synapse-50 text-synapse-700 border px-2.5 py-1 rounded-lg font-semibold"><i class="fas fa-plus mr-1"></i>Add Task</button>` : ''}
-        </div>
-        <div id="project-tasks">${renderProjectTasks(p)}</div>
-      </div>
-
-      <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-        <h3 class="font-bold text-gray-900 mb-4 flex items-center gap-2"><i class="fas fa-flag text-gray-400"></i>Milestones</h3>
-        <div id="project-milestones">${renderProjectMilestones(p)}</div>
-      </div>
-    </div>
-
   </div>`;
-}
-
-function renderProjectTasks(project) {
-  if (!project.tasks || project.tasks.length === 0) return '<p class="text-xs text-gray-400">No tasks created yet.</p>';
-  const statusIcons = { todo: 'far fa-circle text-gray-400', in_progress: 'fas fa-spinner text-blue-500', completed: 'fas fa-check-circle text-emerald-500', overdue: 'fas fa-exclamation-circle text-rose-500' };
-  return project.tasks.map(t => `
-    <div class="flex items-center gap-3 py-2.5 border-b border-gray-100 last:border-0">
-      <i class="${statusIcons[t.status] || 'far fa-circle'} text-sm shrink-0"></i>
-      <div class="flex-1 min-w-0">
-        <p class="text-xs sm:text-sm font-medium text-gray-800 truncate">${t.title}</p>
-        ${t.assignee_name ? `<p class="text-[11px] text-gray-400">${t.assignee_name}</p>` : ''}
-      </div>
-      ${t.due_date ? `<span class="text-[11px] font-semibold text-gray-500 bg-gray-100 px-2 py-0.5 rounded">${new Date(t.due_date).toLocaleDateString()}</span>` : ''}
-    </div>
-  `).join('');
-}
-
-function renderProjectMilestones(project) {
-  if (!project.milestones || project.milestones.length === 0) return '<p class="text-xs text-gray-400">No milestones set.</p>';
-  const statusColors = { pending: 'border-gray-300', in_progress: 'border-blue-500 bg-blue-500', completed: 'border-emerald-500 bg-emerald-500', overdue: 'border-rose-500 bg-rose-500' };
-  return project.milestones.map(m => `
-    <div class="flex items-center gap-3 py-2.5 border-b border-gray-100 last:border-0">
-      <div class="w-3 h-3 rounded-full border-2 ${statusColors[m.status] || 'border-gray-300'} shrink-0"></div>
-      <div class="flex-1">
-        <p class="text-xs sm:text-sm font-medium text-gray-800">${m.title}</p>
-        <p class="text-[11px] text-gray-400">${m.status}${m.due_date ? ` &bull; Due: ${new Date(m.due_date).toLocaleDateString()}` : ''}</p>
-      </div>
-    </div>
-  `).join('');
 }
 
 // ===== Executive Power Actions Handlers =====
@@ -1691,49 +2121,193 @@ async function updateProjectHealth(projectId, newHealth) {
     });
     if (res.success) {
       showToast(`Project health force overridden to '${newHealth}'!`, 'success');
-      state.selectedProject = res.data;
-      render();
+      await loadProjectDetail(projectId);
     }
   } catch (e) {
     // Handled by api helper
   }
 }
 
-function endorseProposal(proposalId) {
-  showToast('Supervisor Endorsement recorded successfully!', 'success');
-}
-
-function scheduleSupervisorMeeting(projectId) {
-  showToast('Review meeting request sent to project team!', 'info');
-}
-
-function triggerCoordinatorBroadcast() {
-  const msg = prompt('Enter System Announcement to Broadcast to all Students & Supervisors:');
-  if (msg) {
-    showToast(`Broadcast Sent: "${msg}"`, 'success');
+async function updateProjectProgress(projectId) {
+  const slider = document.getElementById('project-progress-slider');
+  if (!slider) return;
+  const progress = Math.min(100, Math.max(0, parseInt(slider.value, 10) || 0));
+  try {
+    const res = await api(`/projects/${projectId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ progress })
+    });
+    if (res.success) {
+      showToast(`Progress updated to ${progress}%!`, 'success');
+      await loadProjectDetail(projectId);
+    }
+  } catch (e) {
+    // Handled by api helper
   }
 }
 
-function showAddTaskModal(projectId) {
-  const title = prompt('Enter Task Title for Student:');
-  if (!title) return;
-  const dueDate = prompt('Enter Due Date (YYYY-MM-DD):', '2026-09-01');
-
-  api(`/projects/${projectId}/tasks`, {
-    method: 'POST',
-    body: JSON.stringify({
-      title,
-      due_date: dueDate,
-      status: 'in_progress',
-      priority: 'high'
-    })
-  }).then(res => {
-    if (res.success) {
-      showToast('New task assigned to project team!', 'success');
-      loadProjectDetail(projectId);
-    }
-  });
+// ===== Project Links =====
+function toggleLinkForm() {
+  const form = document.getElementById('link-form');
+  if (form) form.classList.toggle('hidden');
 }
+
+async function addProjectLink(projectId) {
+  const url = document.getElementById('link-url').value.trim();
+  const label = document.getElementById('link-label').value.trim();
+  if (!url) { showToast('Link URL is required', 'error'); return; }
+  try {
+    const res = await api(`/projects/${projectId}/links`, { method: 'POST', body: JSON.stringify({ url, label }) });
+    showToast(res.message || 'Link added!', 'success');
+    await loadProjectDetail(projectId);
+  } catch (e) { /* handled by api helper */ }
+}
+
+async function deleteProjectLink(projectId, linkId) {
+  if (!confirm('Remove this link?')) return;
+  try {
+    const res = await api(`/projects/${projectId}/links/${linkId}`, { method: 'DELETE' });
+    showToast(res.message || 'Link removed', 'success');
+    await loadProjectDetail(projectId);
+  } catch (e) { /* handled by api helper */ }
+}
+
+// ===== Project Gallery (screenshots) =====
+async function handleGalleryUpload(projectId, event) {
+  const file = event.target.files && event.target.files[0];
+  event.target.value = '';
+  if (file) uploadProjectImage(projectId, file);
+}
+
+async function uploadProjectImage(projectId, file) {
+  if (!file || !file.type.startsWith('image/')) { showToast('Please choose an image file', 'error'); return; }
+  if (file.size > 1000 * 1024) { showToast('Image too large (max 1MB)', 'error'); return; }
+  const captionEl = document.getElementById('gallery-caption');
+  const caption = captionEl ? captionEl.value.trim() : '';
+  const reader = new FileReader();
+  reader.onload = async () => {
+    try {
+      const res = await api(`/projects/${projectId}/media`, { method: 'POST', body: JSON.stringify({ data: reader.result, caption }) });
+      if (captionEl) captionEl.value = '';
+      showToast(res.message || 'Screenshot uploaded!', 'success');
+      await loadProjectDetail(projectId);
+    } catch (e) { /* handled by api helper */ }
+  };
+  reader.readAsDataURL(file);
+}
+
+async function deleteProjectMedia(projectId, mediaId) {
+  if (!confirm('Delete this screenshot? Its feedback will also be removed.')) return;
+  try {
+    const res = await api(`/projects/${projectId}/media/${mediaId}`, { method: 'DELETE' });
+    showToast(res.message || 'Screenshot removed', 'success');
+    await loadProjectDetail(projectId);
+  } catch (e) { /* handled by api helper */ }
+}
+
+// Paste screenshots with Ctrl+V
+function attachProjectPaste() {
+  window.removeEventListener('paste', handleProjectPaste);
+  if (state.currentView === 'project-detail') {
+    window.addEventListener('paste', handleProjectPaste);
+  }
+}
+
+async function handleProjectPaste(e) {
+  if (state.currentView !== 'project-detail' || !state.selectedProject) return;
+  if (!['student'].includes(state.currentUser.role)) return;
+  const isMember = (state.selectedProject.members || []).some(m => m.id === state.currentUser.id);
+  if (!isMember) return;
+  const items = e.clipboardData && e.clipboardData.items;
+  if (!items) return;
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      const file = item.getAsFile();
+      if (file) {
+        e.preventDefault();
+        showToast('Pasted screenshot detected — uploading...', 'info');
+        uploadProjectImage(state.selectedProject.id, file);
+        return;
+      }
+    }
+  }
+}
+
+// ===== Lightbox =====
+function openLightbox(projectId, mediaId) {
+  const p = state.selectedProject;
+  const media = (p.media || []).find(m => m.id === mediaId);
+  if (!media) return;
+  const isExec = ['coordinator', 'supervisor'].includes(state.currentUser.role);
+  const overlay = document.createElement('div');
+  overlay.id = 'lightbox-overlay';
+  overlay.className = 'fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4';
+  overlay.innerHTML = `
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto fade-in">
+    <div class="p-4 border-b border-gray-100 flex items-center justify-between">
+      <h3 class="font-bold text-gray-900 text-sm truncate">${media.caption || 'Screenshot'}</h3>
+      <button onclick="closeLightbox()" class="w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700 flex items-center justify-center shrink-0"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="p-4">
+      <img src="${media.data}" class="w-full rounded-xl border border-gray-200" />
+      <p class="text-[11px] text-gray-400 mt-2">Uploaded by ${media.uploader_name || 'Unknown'} &bull; ${new Date(media.created_at).toLocaleString()}</p>
+      <div class="mt-4">
+        <h4 class="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2 flex items-center gap-2"><i class="fas fa-comments text-synapse-500"></i> Feedback on this image</h4>
+        ${isExec ? `
+        <div class="flex flex-col sm:flex-row gap-2 mb-3">
+          <input id="media-feedback-input" class="flex-1 border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" placeholder="Comment on this screenshot..." />
+          <button onclick="addMediaFeedback('${projectId}','${mediaId}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all"><i class="fas fa-paper-plane"></i> Post</button>
+        </div>` : ''}
+        <div class="space-y-2">
+          ${(media.feedback || []).length ? media.feedback.map(f => `
+            <div class="flex items-start gap-2.5 p-2.5 rounded-xl border ${f.author_role === 'coordinator' ? 'bg-purple-50 border-purple-100' : 'bg-blue-50 border-blue-100'}">
+              <div class="w-7 h-7 rounded-lg flex items-center justify-center text-[11px] font-bold shrink-0 ${f.author_role === 'coordinator' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}">${(f.author_name || '?').charAt(0)}</div>
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="text-[11px] font-bold text-gray-900">${f.author_name}</span>
+                  <span class="text-[9px] px-1.5 py-0.5 rounded-full uppercase font-bold ${f.author_role === 'coordinator' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}">${f.author_role}</span>
+                  <span class="text-[10px] text-gray-400">${new Date(f.created_at).toLocaleString()}</span>
+                </div>
+                <p class="text-xs text-gray-700 mt-0.5">${f.message}</p>
+              </div>
+            </div>
+          `).join('') : '<p class="text-xs text-gray-400">No feedback on this image yet.</p>'}
+        </div>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+function closeLightbox() {
+  const el = document.getElementById('lightbox-overlay');
+  if (el) el.remove();
+}
+
+// ===== Project Feedback =====
+async function addOverallFeedback(projectId) {
+  const input = document.getElementById('overall-feedback-input');
+  const message = input ? input.value.trim() : '';
+  if (!message) { showToast('Write a feedback message first', 'error'); return; }
+  try {
+    const res = await api(`/projects/${projectId}/feedback`, { method: 'POST', body: JSON.stringify({ message }) });
+    showToast(res.message || 'Feedback posted!', 'success');
+    await loadProjectDetail(projectId);
+  } catch (e) { /* handled by api helper */ }
+}
+
+async function addMediaFeedback(projectId, mediaId) {
+  const input = document.getElementById('media-feedback-input');
+  const message = input ? input.value.trim() : '';
+  if (!message) { showToast('Write a feedback message first', 'error'); return; }
+  try {
+    const res = await api(`/projects/${projectId}/feedback`, { method: 'POST', body: JSON.stringify({ message, media_id: mediaId }) });
+    showToast(res.message || 'Feedback posted!', 'success');
+    closeLightbox();
+    await loadProjectDetail(projectId);
+  } catch (e) { /* handled by api helper */ }
+}
+
 
 // ===== Supervisors View =====
 function renderSupervisors() {
@@ -2121,10 +2695,17 @@ function renderFeedbackResult(data) {
 }
 
 function renderQueryResult(data, question) {
+  const sources = (data.sources && data.sources.length) ? data.sources : (data.dataUsed || []);
+  const sourceTags = sources.length ? `<div class="flex flex-wrap gap-1 mt-2 pt-2 border-t border-synapse-200/60">${sources.map(s => `<span class="text-[10px] bg-synapse-100/90 text-synapse-800 px-2 py-0.5 rounded-md font-medium"><i class="fas fa-database mr-1 text-[9px] text-synapse-600"></i>${s}</span>`).join('')}</div>` : '';
+  const formattedAnswer = (data.answer || '')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n/g, '<br>');
+
   return `
-  <div class="bg-synapse-50/70 border border-synapse-200 rounded-xl p-3.5 space-y-2 mt-2">
-    <p class="text-xs font-semibold text-synapse-900"><i class="fas fa-question-circle text-synapse-600 mr-1"></i> ${question}</p>
-    <p class="text-xs text-gray-800 leading-relaxed">${data.answer}</p>
+  <div class="bg-synapse-50/70 border border-synapse-200 rounded-xl p-4 space-y-2 mt-2 shadow-xs fade-in">
+    <p class="text-xs font-bold text-synapse-900 flex items-center gap-1.5"><i class="fas fa-user-circle text-synapse-600"></i> ${question}</p>
+    <div class="text-xs text-gray-800 leading-relaxed space-y-1">${formattedAnswer}</div>
+    ${sourceTags}
   </div>`;
 }
 
@@ -2133,31 +2714,47 @@ function renderQueryResult(data, question) {
 function initDashboardCharts(stats) {
   if (!window.Chart || !stats) return;
 
-  // 1. Proposal Breakdown Chart (Doughnut)
+  // 1. Proposal Breakdown Chart (Doughnut) — built from real DB status counts only
   const propElem = document.getElementById('proposalsChart');
   if (propElem) {
     destroyChart('proposalsChart');
     const p = stats.proposals || {};
-    chartInstances['proposalsChart'] = new Chart(propElem, {
-      type: 'doughnut',
-      data: {
-        labels: ['Submitted', 'Approved', 'Under Review', 'Rejected'],
-        datasets: [{
-          data: [p.submitted || 1, p.approved || 0, p.under_review || 0, p.rejected || 0],
-          backgroundColor: ['#0284c7', '#10b981', '#f59e0b', '#f43f5e'],
-          borderWidth: 0,
-          hoverOffset: 6
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11, weight: '600' } } }
+    const statusMeta = [
+      { key: 'draft', label: 'Draft', color: '#64748b' },
+      { key: 'submitted', label: 'Submitted', color: '#0284c7' },
+      { key: 'under_review', label: 'Under Review', color: '#f59e0b' },
+      { key: 'approved', label: 'Approved', color: '#10b981' },
+      { key: 'rejected', label: 'Rejected', color: '#f43f5e' },
+      { key: 'revision_requested', label: 'Revision Requested', color: '#8b5cf6' },
+    ];
+    const present = statusMeta
+      .map(s => ({ ...s, count: Number(p[s.key]) || 0 }))
+      .filter(s => s.count > 0);
+    if (present.length) {
+      chartInstances['proposalsChart'] = new Chart(propElem, {
+        type: 'doughnut',
+        data: {
+          labels: present.map(s => s.label),
+          datasets: [{
+            data: present.map(s => s.count),
+            backgroundColor: present.map(s => s.color),
+            borderWidth: 0,
+            hoverOffset: 6
+          }]
         },
-        cutout: '70%'
-      }
-    });
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11, weight: '600' } } }
+          },
+          cutout: '70%'
+        }
+      });
+    } else {
+      propElem.parentElement.innerHTML =
+        '<p class="h-full flex items-center justify-center text-xs text-gray-400">No proposals found.</p>';
+    }
   }
 
   // 2. Project Health Risk Status Chart (Bar)
@@ -2185,35 +2782,6 @@ function initDashboardCharts(stats) {
           y: { beginAtZero: true, ticks: { stepSize: 1, font: { size: 10 } }, grid: { borderDash: [4, 4] } },
           x: { ticks: { font: { size: 11, weight: '600' } }, grid: { display: false } }
         }
-      }
-    });
-  }
-
-  // 3. Task Completion Doughnut Chart
-  const taskElem = document.getElementById('taskOverviewChart');
-  if (taskElem) {
-    destroyChart('taskOverviewChart');
-    const t = stats.tasks || {};
-    const completed = t.completed || 0;
-    const overdue = t.overdue || 0;
-    const total = t.total || 0;
-    const inProgress = Math.max(0, total - completed - overdue);
-
-    chartInstances['taskOverviewChart'] = new Chart(taskElem, {
-      type: 'doughnut',
-      data: {
-        labels: ['Completed', 'Overdue', 'In Progress'],
-        datasets: [{
-          data: [completed, overdue, inProgress],
-          backgroundColor: ['#10b981', '#f43f5e', '#6366f1'],
-          borderWidth: 0
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11, weight: '600' } } } },
-        cutout: '70%'
       }
     });
   }
@@ -2297,9 +2865,9 @@ async function loadDashboard() {
           <div class="text-xs text-gray-400 mt-1 font-medium">${d.users?.supervisors || 0} supervisors</div>
         </div>
         <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
-          <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Tasks</div>
-          <div class="text-2xl font-extrabold text-gray-900 mt-1">${d.tasks?.total || 0}</div>
-          <div class="text-xs text-rose-600 mt-1 font-medium">${d.tasks?.overdue || 0} overdue tasks</div>
+          <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Proposals Approved</div>
+          <div class="text-2xl font-extrabold text-gray-900 mt-1">${d.proposals?.approved || 0}</div>
+          <div class="text-xs text-emerald-600 mt-1 font-medium">cleared for execution</div>
         </div>
       `;
     }
@@ -2332,7 +2900,6 @@ async function loadDashboard() {
             </div>
             <div class="flex items-center gap-3">
               <span class="text-[11px] ${hc[p.health] || ''}">${(p.health || '').replace('_', ' ')}</span>
-              <span class="text-xs font-semibold text-gray-600 bg-gray-100 px-2 py-0.5 rounded">${p.progress || 0}%</span>
             </div>
           </div>`;
       }).join('') || '<p class="text-xs text-gray-400">No active projects recorded.</p>';
@@ -2355,6 +2922,7 @@ async function loadProposals() {
             <div class="min-w-0 flex-1">
               <h3 class="text-xs sm:text-sm font-bold text-gray-900 truncate">${p.title}</h3>
               <p class="text-[11px] text-gray-500 mt-0.5">${p.submitter_name || 'Unknown'} &bull; ${new Date(p.created_at).toLocaleDateString()}</p>
+              ${p.group_name ? `<span class="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-synapse-50 text-synapse-700 border border-synapse-100"><i class="fas fa-users"></i>${p.group_name}</span>` : ''}
             </div>
             <span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold ${statusColors[p.status] || 'bg-gray-100'}">${p.status.replace('_', ' ')}</span>
           </div>
@@ -2373,9 +2941,16 @@ async function loadProposalDetail(id) {
       api(`/proposals/${id}`),
       api('/users?role=supervisor')
     ]);
-    state.selectedProposal = res.data;
+    const proposal = res.data;
+    if (proposal.group_id) {
+      try {
+        const groupRes = await api(`/groups/${proposal.group_id}`);
+        proposal.groupMembers = (groupRes.data && groupRes.data.members) || [];
+      } catch (e) { proposal.groupMembers = []; }
+    }
+    state.selectedProposal = proposal;
     state.supervisors = supervisorsRes.data || [];
-    navigate('proposal-detail', res.data);
+    navigate('proposal-detail', proposal);
   } catch (e) {
     console.error('Failed to load proposal:', e);
   }
@@ -2396,12 +2971,8 @@ async function loadProjects() {
               <p class="text-[11px] text-gray-500 mt-0.5">Supervisor: ${p.supervisor_name || 'Unassigned'}</p>
             </div>
             <div class="text-right">
-              <span class="text-xs font-bold text-gray-800">${p.progress || 0}%</span>
-              <p class="text-[10px] text-gray-400 capitalize">${(p.health || '').replace('_', ' ')}</p>
+              <span class="text-[10px] text-gray-400 capitalize">${(p.health || '').replace('_', ' ')}</span>
             </div>
-          </div>
-          <div class="mt-3 bg-gray-100 rounded-full h-1.5">
-            <div class="bg-synapse-600 h-1.5 rounded-full" style="width: ${p.progress || 0}%"></div>
           </div>
         </div>
       `).join('') || '<p class="text-xs text-gray-400">No projects found.</p>';
@@ -2463,17 +3034,681 @@ async function loadSupervisors() {
   }
 }
 
+// ===== Student Groups =====
+function renderGroups() {
+  const role = state.currentUser.role;
+  return `
+  <div class="fade-in space-y-6">
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div>
+        <h1 class="text-2xl font-bold text-gray-900">${role === 'coordinator' ? 'Student Groups' : 'My Group'}</h1>
+        <p class="text-gray-500 text-xs sm:text-sm mt-0.5">${role === 'coordinator' ? 'Review and approve FYP student teams (max 4 members each)' : 'Your FYP team — get it approved to submit one joint proposal'}</p>
+      </div>
+      ${role === 'student' ? `
+      <button onclick="showCreateGroupModal()" class="bg-synapse-600 hover:bg-synapse-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-synapse-500/20 transition-all flex items-center justify-center gap-2">
+        <i class="fas fa-plus"></i>
+        <span>Create Group</span>
+      </button>` : ''}
+    </div>
+    <div id="groups-list" class="space-y-3">Loading...</div>
+  </div>`;
+}
+
+function renderGroupProfile() {
+  const g = state.selectedGroup;
+  if (!g) return '<p class="p-6 text-gray-500">No group selected</p>';
+
+  const statusColors = {
+    pending: 'bg-amber-100 text-amber-700 border-amber-200',
+    approved: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    rejected: 'bg-rose-100 text-rose-700 border-rose-200'
+  };
+  const members = g.members || [];
+  const isExecutive = ['coordinator', 'supervisor'].includes(state.currentUser.role);
+  const isLeader = state.currentUser.role === 'student' && state.currentUser.id === g.leader_id;
+  const canManage = isLeader && g.status === 'pending';
+  const canDelete = (isLeader && g.status !== 'approved') || state.currentUser.role === 'coordinator';
+
+  return `
+  <div class="fade-in space-y-6">
+    <button onclick="navigate('groups')" class="text-xs font-semibold text-gray-500 hover:text-gray-800 inline-flex items-center gap-1.5 bg-white border px-3 py-1.5 rounded-xl shadow-sm">
+      <i class="fas fa-arrow-left text-xs"></i> Back to Groups
+    </button>
+
+    <div class="bg-gradient-to-r from-synapse-900 via-indigo-900 to-slate-900 text-white rounded-2xl p-6 shadow-xl border border-synapse-500/20">
+      <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+        <div class="min-w-0">
+          <div class="flex items-center gap-2 flex-wrap">
+            <h1 class="text-xl sm:text-2xl font-bold">${g.name}</h1>
+            <span class="px-3 py-0.5 rounded-full text-[11px] font-bold border ${statusColors[g.status] || 'bg-gray-100'} capitalize">${g.status}</span>
+          </div>
+          <p class="text-sm text-synapse-200 mt-2"><i class="fas fa-crown text-amber-400 mr-1.5"></i>Group Leader: <span class="font-semibold text-white">${g.leader_name || 'Unknown'}</span></p>
+          <p class="text-[11px] text-synapse-300 mt-1"><i class="fas fa-users mr-1.5"></i>${members.length}/4 members &bull; Max group size: ${g.max_members || 4}</p>
+        </div>
+        <div class="flex flex-wrap gap-2 shrink-0">
+          ${isExecutive && g.status === 'pending' ? `
+            <button onclick="approveGroup('${g.id}')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-md"><i class="fas fa-check-circle mr-1"></i>Approve</button>
+            <button onclick="rejectGroup('${g.id}')" class="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-md"><i class="fas fa-times-circle mr-1"></i>Reject</button>
+          ` : ''}
+          ${isExecutive ? `<button onclick="showChangeLeaderModal('${g.id}')" class="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-md"><i class="fas fa-crown mr-1"></i>Change Leader</button>` : ''}
+          ${canDelete ? `<button onclick="deleteGroup('${g.id}')" class="bg-white/10 hover:bg-white/20 border border-white/20 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all"><i class="fas fa-trash mr-1"></i>Delete</button>` : ''}
+        </div>
+      </div>
+    </div>
+
+    <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+      <div class="flex items-center justify-between gap-3">
+        <h2 class="font-bold text-gray-900"><i class="fas fa-users text-synapse-500 mr-2"></i>Group Members</h2>
+        ${canManage ? `<button onclick="showAddMemberModal('${g.id}')" class="bg-synapse-600 hover:bg-synapse-700 text-white px-3 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5"><i class="fas fa-user-plus"></i> Add Member</button>` : ''}
+      </div>
+      <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+        ${members.map(m => `
+          <div class="flex items-center justify-between p-3 rounded-xl border border-gray-200">
+            <div class="flex items-center gap-3 min-w-0">
+              <div class="w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold shrink-0 ${m.is_leader ? 'bg-amber-100 text-amber-700' : 'bg-synapse-100 text-synapse-700'}">${(m.name || '?').charAt(0)}</div>
+              <div class="min-w-0">
+                <div class="text-xs font-bold text-gray-900 truncate flex items-center gap-1.5">${m.name}${m.is_leader ? '<span class="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-bold uppercase">Leader</span>' : ''}</div>
+                <div class="text-[11px] text-gray-500 truncate">${m.email}${m.department ? ' &bull; ' + m.department : ''}</div>
+              </div>
+            </div>
+            ${canManage && !m.is_leader ? `<button onclick="removeGroupMember('${g.id}','${m.id}')" class="text-gray-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition-colors" title="Remove member"><i class="fas fa-times"></i></button>` : ''}
+          </div>
+        `).join('')}
+      </div>
+    </div>
+
+    ${canManage ? `
+    <div class="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-700 flex items-start gap-2">
+      <i class="fas fa-hourglass-half mt-0.5"></i>
+      <span><b>Awaiting approval.</b> The coordinator will review this team. Once approved, only you (the leader) can submit the group's joint FYP proposal.</span>
+    </div>` : ''}
+    ${g.status === 'approved' ? `
+    <div class="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-xs text-emerald-700 flex items-start gap-2">
+      <i class="fas fa-check-circle mt-0.5"></i>
+      <span><b>Group approved!</b> The group leader can now submit one joint FYP proposal that covers all ${members.length} members.</span>
+    </div>` : ''}
+  </div>`;
+}
+
+// ===== Profile =====
+function renderProfile() {
+  const u = state.currentUser;
+  const roleIcons = { coordinator: 'fa-crown', supervisor: 'fa-user-tie', student: 'fa-user-graduate' };
+  const roleColors = { coordinator: 'from-purple-600 to-indigo-700', supervisor: 'from-blue-600 to-synapse-700', student: 'from-emerald-600 to-teal-700' };
+  return `
+  <div class="fade-in space-y-6">
+    <div class="bg-gradient-to-r ${roleColors[u.role] || 'from-synapse-600 to-indigo-700'} text-white rounded-2xl p-6 shadow-xl relative overflow-hidden">
+      <div class="absolute -right-10 -top-10 w-48 h-48 bg-white/10 rounded-full blur-2xl pointer-events-none"></div>
+      <div class="relative flex flex-col sm:flex-row sm:items-center gap-5">
+        <div class="relative shrink-0 w-fit">
+          <div class="w-24 h-24 rounded-2xl overflow-hidden bg-white/20 border-2 border-white/30 shadow-lg flex items-center justify-center">
+            ${u.avatar ? `<img src="${u.avatar}" alt="${u.name}" class="w-full h-full object-cover" />` : `<i class="fas ${roleIcons[u.role] || 'fa-user'} text-3xl text-white/80"></i>`}
+          </div>
+          <button onclick="triggerAvatarUpload()" class="absolute -bottom-2 -right-2 w-9 h-9 rounded-xl bg-white text-gray-700 shadow-lg flex items-center justify-center hover:scale-105 transition-all border border-gray-200" title="Change photo">
+            <i class="fas fa-camera text-sm"></i>
+          </button>
+        </div>
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-2 flex-wrap">
+            <h1 class="text-xl sm:text-2xl font-bold truncate">${u.name}</h1>
+            <span class="px-2.5 py-0.5 rounded-full text-[10px] bg-white/20 border border-white/30 font-bold uppercase tracking-wider capitalize">${u.role}</span>
+          </div>
+          <p class="text-xs sm:text-sm opacity-85 mt-1 truncate"><i class="fas fa-envelope mr-1.5 opacity-70"></i>${u.email}</p>
+          <p class="text-xs sm:text-sm opacity-85 mt-0.5"><i class="fas fa-building mr-1.5 opacity-70"></i>${u.department || 'Computer Science'}</p>
+        </div>
+        <button onclick="showEditProfileModal()" class="shrink-0 self-start sm:self-center bg-white/15 hover:bg-white/25 border border-white/25 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2">
+          <i class="fas fa-pen"></i> Edit Profile
+        </button>
+      </div>
+    </div>
+    <input type="file" id="avatar-file-input" accept="image/*" class="hidden" onchange="handleAvatarUpload(event)" />
+    <div id="profile-content" class="grid grid-cols-1 lg:grid-cols-2 gap-6">Loading...</div>
+  </div>`;
+}
+
+function triggerAvatarUpload() {
+  const input = document.getElementById('avatar-file-input');
+  if (input) input.click();
+}
+
+async function handleAvatarUpload(e) {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  if (!file.type.startsWith('image/')) { showToast('Please choose an image file', 'error'); return; }
+  if (file.size > 400 * 1024) { showToast('Image too large (max 400KB)', 'error'); return; }
+  const reader = new FileReader();
+  reader.onload = async () => {
+    try {
+      await api(`/users/${state.currentUser.id}/avatar`, { method: 'PUT', body: JSON.stringify({ avatar: reader.result }) });
+      state.currentUser.avatar = reader.result;
+      localStorage.setItem('synapse_user', JSON.stringify(state.currentUser));
+      showToast('Profile photo updated!', 'success');
+      render();
+    } catch (err) { /* handled by api helper */ }
+  };
+  reader.readAsDataURL(file);
+}
+
+function showEditProfileModal() {
+  const u = state.currentUser;
+  const overlay = document.createElement('div');
+  overlay.id = 'group-modal-overlay';
+  overlay.className = 'fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4';
+  overlay.innerHTML = `
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto fade-in">
+    <div class="p-5 border-b border-gray-100 flex items-center justify-between">
+      <h3 class="font-bold text-gray-900">Edit Profile</h3>
+      <button onclick="closeGroupModal()" class="w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700 flex items-center justify-center"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="p-5 space-y-4">
+      <div>
+        <label class="block text-xs font-semibold text-gray-700 mb-1">Full Name</label>
+        <input id="edit-name" value="${u.name || ''}" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" />
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-gray-700 mb-1">Email</label>
+        <input id="edit-email" type="email" value="${u.email || ''}" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" />
+      </div>
+      <div class="pt-2 border-t border-gray-100">
+        <label class="block text-xs font-semibold text-gray-700 mb-1">New Password <span class="text-gray-400 font-normal">(optional, min 6 chars)</span></label>
+        <input id="edit-password" type="password" placeholder="Leave blank to keep current password" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" />
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-gray-700 mb-1">Confirm Password</label>
+        <input id="edit-password-confirm" type="password" placeholder="Re-enter new password" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" />
+      </div>
+      <button onclick="submitEditProfile()" class="w-full bg-synapse-600 hover:bg-synapse-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-synapse-500/20 transition-all"><i class="fas fa-save mr-1"></i>Save Changes</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitEditProfile() {
+  const name = document.getElementById('edit-name').value.trim();
+  const email = document.getElementById('edit-email').value.trim();
+  const password = document.getElementById('edit-password').value;
+  const confirmPwd = document.getElementById('edit-password-confirm').value;
+
+  if (!name) { showToast('Name cannot be empty', 'error'); return; }
+  if (!email) { showToast('Email cannot be empty', 'error'); return; }
+  if (password && password !== confirmPwd) { showToast('Passwords do not match', 'error'); return; }
+  if (password && password.length < 6) { showToast('Password must be at least 6 characters', 'error'); return; }
+
+  const payload = { name, email };
+  if (password) payload.password = password;
+
+  try {
+    const res = await api(`/users/${state.currentUser.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+    state.currentUser = { ...state.currentUser, ...res.data };
+    localStorage.setItem('synapse_user', JSON.stringify(state.currentUser));
+    showToast(res.message || 'Profile updated!', 'success');
+    closeGroupModal();
+    render();
+  } catch (e) { /* handled by api helper */ }
+}
+
+// ===== Groups Data & Actions =====
+async function loadGroups() {
+  try {
+    const res = await api('/groups');
+    state.groups = res.data || [];
+    const container = document.getElementById('groups-list');
+    if (!container) return;
+    const role = state.currentUser.role;
+
+    if (role === 'student') {
+      state.myGroup = state.groups[0] || null;
+      if (state.groups.length === 0) {
+        container.innerHTML = `
+        <div class="bg-white rounded-2xl border-2 border-dashed border-gray-200 p-8 text-center">
+          <div class="w-16 h-16 bg-synapse-100 text-synapse-600 rounded-2xl mx-auto flex items-center justify-center text-2xl mb-3"><i class="fas fa-users"></i></div>
+          <h3 class="font-bold text-gray-900">You are not in a group yet</h3>
+          <p class="text-xs text-gray-500 mt-1 max-w-sm mx-auto">Form a team of up to 4 students. Once the coordinator approves it, the group leader can submit one joint FYP proposal.</p>
+          <button onclick="showCreateGroupModal()" class="mt-4 bg-synapse-600 hover:bg-synapse-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-synapse-500/20 transition-all flex items-center gap-2 mx-auto">
+            <i class="fas fa-plus"></i> Create Group
+          </button>
+        </div>`;
+        return;
+      }
+      container.innerHTML = state.groups.map(g => renderGroupCard(g)).join('');
+    } else {
+      container.innerHTML = state.groups.map(g => renderGroupCard(g)).join('') || '<p class="text-xs text-gray-400">No student groups formed yet.</p>';
+    }
+  } catch (e) {
+    console.error('Failed to load groups:', e);
+  }
+}
+
+function renderGroupCard(g) {
+  const statusColors = { pending: 'bg-amber-100 text-amber-700 border-amber-200', approved: 'bg-emerald-100 text-emerald-700 border-emerald-200', rejected: 'bg-rose-100 text-rose-700 border-rose-200' };
+  const isExecutive = ['coordinator', 'supervisor'].includes(state.currentUser.role);
+  return `
+  <div class="bg-white rounded-2xl border border-gray-200 p-4 sm:p-5 shadow-sm hover:shadow-md transition-all">
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center gap-2 flex-wrap">
+          <h3 class="text-sm font-bold text-gray-900 truncate">${g.name}</h3>
+          <span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${statusColors[g.status] || 'bg-gray-100'} capitalize">${g.status}</span>
+        </div>
+        <p class="text-[11px] text-gray-500 mt-1">
+          <i class="fas fa-crown text-amber-500 mr-1"></i>Leader: <span class="font-semibold text-gray-700">${g.leader_name || 'Unknown'}</span>
+          ${isExecutive ? ` &bull; <span class="font-semibold text-gray-700">${g.member_count || 0}</span>/4 members` : ''}
+        </p>
+      </div>
+      <div class="flex gap-2 shrink-0">
+        <button onclick="loadGroupDetail('${g.id}')" class="border border-gray-200 px-3 py-2 rounded-xl text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors">
+          <i class="fas fa-eye mr-1"></i>View Profile
+        </button>
+        ${isExecutive && g.status === 'pending' ? `
+          <button onclick="approveGroup('${g.id}')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-xl text-xs font-bold transition-colors"><i class="fas fa-check-circle mr-1"></i>Approve</button>
+          <button onclick="rejectGroup('${g.id}')" class="bg-rose-600 hover:bg-rose-700 text-white px-3 py-2 rounded-xl text-xs font-bold transition-colors"><i class="fas fa-times-circle mr-1"></i>Reject</button>
+        ` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+async function loadGroupDetail(id) {
+  try {
+    const res = await api(`/groups/${id}`);
+    state.selectedGroup = res.data;
+    navigate('group-profile', res.data);
+  } catch (e) {
+    console.error('Failed to load group:', e);
+  }
+}
+
+async function loadMyGroup() {
+  try {
+    if (state.currentUser.role !== 'student') return;
+    const res = await api('/groups');
+    state.myGroup = (res.data || [])[0] || null;
+    renderProposalGroupBanner();
+  } catch (e) {
+    console.error('Failed to load my group:', e);
+  }
+}
+
+function renderProposalGroupBanner() {
+  const banner = document.getElementById('proposal-group-banner');
+  if (!banner) return;
+  const g = state.myGroup;
+  if (!g) {
+    banner.innerHTML = `
+      <div class="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 text-xs text-amber-700 flex items-start gap-2">
+        <i class="fas fa-exclamation-triangle mt-0.5"></i>
+        <span>You are not in a group yet. <button onclick="navigate('groups')" class="underline font-bold">Create a group</button> — only the leader of an <b>approved</b> group can submit a proposal.</span>
+      </div>`;
+    return;
+  }
+  if (g.status !== 'approved') {
+    banner.innerHTML = `
+      <div class="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 text-xs text-amber-700 flex items-start gap-2">
+        <i class="fas fa-hourglass-half mt-0.5"></i>
+        <span>Your group "<b>${g.name}</b>" is <b>${g.status}</b>. Wait for the coordinator to approve it before submitting your joint proposal.</span>
+      </div>`;
+    return;
+  }
+  if (g.leader_id === state.currentUser.id) {
+    banner.innerHTML = `
+      <div class="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 text-xs text-emerald-700 flex items-start gap-2">
+        <i class="fas fa-check-circle mt-0.5"></i>
+        <span>Your group "<b>${g.name}</b>" is approved. As the leader, you can submit <b>one joint proposal</b> covering all members.</span>
+      </div>`;
+  } else {
+    banner.innerHTML = `
+      <div class="bg-synapse-50 border border-synapse-200 rounded-2xl p-3.5 text-xs text-synapse-700 flex items-start gap-2">
+        <i class="fas fa-info-circle mt-0.5"></i>
+        <span>You are a member of approved group "<b>${g.name}</b>". Only the group leader can submit the proposal.</span>
+      </div>`;
+  }
+}
+
+async function loadProfile() {
+  try {
+    const me = state.currentUser;
+    const [userRes, groupsRes, proposalsRes, projectsRes] = await Promise.all([
+      api(`/users/${me.id}`).catch(() => null),
+      api('/groups').catch(() => null),
+      api('/proposals').catch(() => null),
+      api('/projects').catch(() => null),
+    ]);
+    const user = (userRes && userRes.data) || me;
+    const groups = (groupsRes && groupsRes.data) || [];
+    const proposals = (proposalsRes && proposalsRes.data) || [];
+    const projects = (projectsRes && projectsRes.data) || [];
+    const container = document.getElementById('profile-content');
+    if (!container) return;
+
+    let sections = '';
+
+    if (me.role === 'student') {
+      const g = groups[0] || null;
+      sections += `
+        <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+          <h3 class="font-bold text-gray-900 text-sm mb-3"><i class="fas fa-users text-synapse-500 mr-2"></i>My Group</h3>
+          ${g ? `
+            <div class="space-y-2">
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-xs font-semibold text-gray-700 truncate">${g.name}</span>
+                <span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${g.status === 'approved' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : g.status === 'rejected' ? 'bg-rose-100 text-rose-700 border-rose-200' : 'bg-amber-100 text-amber-700 border-amber-200'} capitalize">${g.status}</span>
+              </div>
+              <p class="text-[11px] text-gray-500">Leader: ${g.leader_name || 'Unknown'} &bull; ${g.member_count || 1}/4 members</p>
+              <button onclick="loadGroupDetail('${g.id}')" class="mt-2 w-full border border-gray-200 px-3 py-2 rounded-xl text-xs font-semibold text-synapse-700 hover:bg-synapse-50 transition-colors">Open Group Profile</button>
+            </div>
+          ` : `
+            <p class="text-xs text-gray-500">You are not in a group yet.</p>
+            <button onclick="navigate('groups')" class="mt-2 w-full bg-synapse-600 hover:bg-synapse-700 text-white px-3 py-2 rounded-xl text-xs font-semibold transition-all">Create Group</button>
+          `}
+        </div>
+
+        <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+          <h3 class="font-bold text-gray-900 text-sm mb-3"><i class="fas fa-file-alt text-synapse-500 mr-2"></i>My Proposals</h3>
+          <p class="text-3xl font-bold text-gray-900">${proposals.length}</p>
+          <p class="text-[11px] text-gray-500 mt-1">${proposals.filter(p => p.status === 'approved').length} approved &bull; ${proposals.filter(p => p.status === 'submitted').length} submitted</p>
+          ${proposals.length ? `
+            <div class="mt-3 space-y-2 max-h-44 overflow-y-auto">
+              ${proposals.map(p => `
+                <button onclick="loadProposalDetail('${p.id}')" class="w-full text-left p-2.5 rounded-xl border border-gray-100 hover:bg-gray-50 transition-colors">
+                  <span class="block text-xs font-semibold text-gray-800 truncate">${p.title}</span>
+                  <span class="text-[10px] text-gray-400 capitalize">${p.status.replace('_', ' ')}</span>
+                </button>
+              `).join('')}
+            </div>` : ''}
+        </div>
+
+        <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+          <h3 class="font-bold text-gray-900 text-sm mb-3"><i class="fas fa-project-diagram text-synapse-500 mr-2"></i>My Projects</h3>
+          <p class="text-3xl font-bold text-gray-900">${projects.length}</p>
+          ${projects.length ? `<div class="mt-3 space-y-2 max-h-44 overflow-y-auto">${projects.map(pr => `<button onclick="loadProjectDetail('${pr.id}')" class="w-full text-left p-2.5 rounded-xl border border-gray-100 hover:bg-gray-50 transition-colors"><span class="block text-xs font-semibold text-gray-800 truncate">${pr.title}</span></button>`).join('')}</div>` : '<p class="text-[11px] text-gray-400 mt-1">No projects assigned yet.</p>'}
+        </div>
+      `;
+    } else if (me.role === 'supervisor') {
+      sections += `
+        <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+          <h3 class="font-bold text-gray-900 text-sm mb-3"><i class="fas fa-graduation-cap text-synapse-500 mr-2"></i>Supervision</h3>
+          <p class="text-3xl font-bold text-gray-900">${projects.length}</p>
+          <p class="text-[11px] text-gray-500 mt-1">Projects currently supervised</p>
+          ${projects.length ? `<div class="mt-3 space-y-2 max-h-44 overflow-y-auto">${projects.map(pr => `<button onclick="loadProjectDetail('${pr.id}')" class="w-full text-left p-2.5 rounded-xl border border-gray-100 hover:bg-gray-50 transition-colors"><span class="block text-xs font-semibold text-gray-800 truncate">${pr.title}</span></button>`).join('')}</div>` : ''}
+        </div>
+      `;
+    } else {
+      sections += `
+        <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+          <h3 class="font-bold text-gray-900 text-sm mb-3"><i class="fas fa-chart-bar text-synapse-500 mr-2"></i>Coordinator Overview</h3>
+          <div class="grid grid-cols-2 gap-3">
+            <div class="p-4 rounded-xl bg-purple-50 border border-purple-100 text-center">
+              <div class="text-2xl font-bold text-purple-700">${proposals.length}</div>
+              <div class="text-[11px] text-purple-600 font-semibold mt-1">Total Proposals</div>
+            </div>
+            <div class="p-4 rounded-xl bg-emerald-50 border border-emerald-100 text-center">
+              <div class="text-2xl font-bold text-emerald-700">${groups.length}</div>
+              <div class="text-[11px] text-emerald-600 font-semibold mt-1">Student Groups</div>
+            </div>
+          </div>
+          <button onclick="navigate('groups')" class="mt-3 w-full border border-gray-200 px-3 py-2 rounded-xl text-xs font-semibold text-purple-700 hover:bg-purple-50 transition-colors">Review Student Groups</button>
+        </div>
+      `;
+    }
+
+    const expertise = user.expertise ? (() => { try { return JSON.parse(user.expertise); } catch (e) { return []; } })() : [];
+    sections = `
+      <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+        <h3 class="font-bold text-gray-900 text-sm mb-3"><i class="fas fa-id-card text-synapse-500 mr-2"></i>Personal Information</h3>
+        <dl class="space-y-2.5">
+          <div class="flex justify-between gap-3"><dt class="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Full Name</dt><dd class="text-xs font-semibold text-gray-800 text-right">${user.name || me.name}</dd></div>
+          <div class="flex justify-between gap-3"><dt class="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Email</dt><dd class="text-xs text-gray-800 text-right break-all">${user.email || me.email}</dd></div>
+          <div class="flex justify-between gap-3"><dt class="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Role</dt><dd class="text-xs font-semibold text-gray-800 capitalize text-right">${me.role}</dd></div>
+          <div class="flex justify-between gap-3"><dt class="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Department</dt><dd class="text-xs text-gray-800 text-right">${user.department || me.department || 'Computer Science'}</dd></div>
+          ${expertise.length ? `<div class="flex justify-between gap-3"><dt class="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Expertise</dt><dd class="text-xs text-gray-800 text-right flex flex-wrap gap-1 justify-end">${expertise.map(e => `<span class="bg-synapse-50 text-synapse-700 px-2 py-0.5 rounded-lg text-[10px] font-medium">${e}</span>`).join('')}</dd></div>` : ''}
+        </dl>
+      </div>
+    ` + sections;
+
+    container.innerHTML = sections;
+  } catch (e) {
+    console.error('Failed to load profile:', e);
+  }
+}
+
+// ===== Group Modals & Actions =====
+async function loadAllStudents() {
+  try {
+    const res = await api('/groups/available-students');
+    state.students = res.data || [];
+    return state.students;
+  } catch (e) {
+    return [];
+  }
+}
+
+async function showCreateGroupModal() {
+  const students = await loadAllStudents();
+  const candidates = students.filter(s => s.id !== state.currentUser.id);
+  const overlay = document.createElement('div');
+  overlay.id = 'group-modal-overlay';
+  overlay.className = 'fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4';
+  overlay.innerHTML = `
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto fade-in">
+    <div class="p-5 border-b border-gray-100 flex items-center justify-between">
+      <h3 class="font-bold text-gray-900">Create Student Group</h3>
+      <button onclick="closeGroupModal()" class="w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700 flex items-center justify-center"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="p-5 space-y-4">
+      <div class="bg-synapse-50 border border-synapse-100 rounded-xl p-3 text-[11px] text-synapse-700">
+        You will be the <b>group leader</b> and can invite up to <b>3</b> more students (max 4 total). The coordinator must approve the group before your leader submits the joint proposal.
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-gray-700 mb-1">Group Name *</label>
+        <input id="new-group-name" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" placeholder="e.g. AI Traffic Vision Team" />
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-gray-700 mb-1">Select Members <span class="text-gray-400 font-normal">(up to 3)</span></label>
+        <div id="group-member-picker" class="mt-2 max-h-60 overflow-y-auto space-y-2">
+          ${candidates.length ? candidates.map(s => `
+            <label class="flex items-center gap-3 p-3 rounded-xl border border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors">
+              <input type="checkbox" class="member-check accent-synapse-600" value="${s.id}" onchange="updateMemberPicker()" />
+              <span class="w-8 h-8 bg-synapse-100 text-synapse-700 rounded-lg flex items-center justify-center text-xs font-bold shrink-0">${s.name.charAt(0)}</span>
+              <span class="min-w-0">
+                <span class="block text-xs font-semibold text-gray-800 truncate">${s.name}</span>
+                <span class="block text-[11px] text-gray-500 truncate">${s.email}</span>
+              </span>
+            </label>
+          `).join('') : '<p class="text-xs text-gray-400">No other students available.</p>'}
+        </div>
+        <p id="group-member-hint" class="text-[11px] text-gray-400 mt-2"></p>
+      </div>
+      <button onclick="submitCreateGroup()" class="w-full bg-synapse-600 hover:bg-synapse-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-synapse-500/20 transition-all"><i class="fas fa-users mr-1"></i>Create Group</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  updateMemberPicker();
+}
+
+function closeGroupModal() {
+  const el = document.getElementById('group-modal-overlay');
+  if (el) el.remove();
+}
+
+function updateMemberPicker() {
+  const checks = [...document.querySelectorAll('.member-check')];
+  const hint = document.getElementById('group-member-hint');
+  const selected = checks.filter(c => c.checked);
+  if (hint) hint.textContent = `${selected.length}/3 selected. Group will have ${selected.length + 1}/4 members.`;
+  checks.forEach(c => {
+    if (!c.checked && selected.length >= 3) { c.disabled = true; c.closest('label').classList.add('opacity-40', 'pointer-events-none'); }
+    else { c.disabled = false; c.closest('label').classList.remove('opacity-40', 'pointer-events-none'); }
+  });
+}
+
+async function submitCreateGroup() {
+  const name = document.getElementById('new-group-name').value.trim();
+  if (!name) { showToast('Enter a group name', 'error'); return; }
+  const memberIds = [...document.querySelectorAll('.member-check:checked')].map(c => c.value);
+  try {
+    const res = await api('/groups', { method: 'POST', body: JSON.stringify({ name, memberIds }) });
+    showToast(res.message || 'Group created!', 'success');
+    closeGroupModal();
+    navigate('groups');
+    loadGroups();
+  } catch (e) { /* handled by api helper */ }
+}
+
+async function showAddMemberModal(groupId) {
+  const students = await loadAllStudents();
+  const existingIds = ((state.selectedGroup && state.selectedGroup.members) || []).map(m => m.id);
+  const candidates = students.filter(s => !existingIds.includes(s.id));
+  if (candidates.length === 0) { showToast('No more students available to add.', 'warning'); return; }
+  const overlay = document.createElement('div');
+  overlay.id = 'group-modal-overlay';
+  overlay.className = 'fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4';
+  overlay.innerHTML = `
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto fade-in">
+    <div class="p-5 border-b border-gray-100 flex items-center justify-between">
+      <h3 class="font-bold text-gray-900">Add Group Member</h3>
+      <button onclick="closeGroupModal()" class="w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700 flex items-center justify-center"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="p-5 space-y-4">
+      <div class="mt-2 max-h-60 overflow-y-auto space-y-2">
+        ${candidates.length ? candidates.map(s => `
+          <label class="flex items-center gap-3 p-3 rounded-xl border border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors">
+            <input type="radio" name="add-member-radio" class="add-member-radio accent-synapse-600" value="${s.id}" />
+            <span class="w-8 h-8 bg-synapse-100 text-synapse-700 rounded-lg flex items-center justify-center text-xs font-bold shrink-0">${s.name.charAt(0)}</span>
+            <span class="min-w-0">
+              <span class="block text-xs font-semibold text-gray-800 truncate">${s.name}</span>
+              <span class="block text-[11px] text-gray-500 truncate">${s.email}</span>
+            </span>
+          </label>
+        `).join('') : '<p class="text-xs text-gray-400">No more students available.</p>'}
+      </div>
+      <button onclick="submitAddMember('${groupId}')" class="w-full bg-synapse-600 hover:bg-synapse-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-md transition-all"><i class="fas fa-user-plus mr-1"></i>Add Member</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitAddMember(groupId) {
+  const radio = document.querySelector('.add-member-radio:checked');
+  if (!radio) { showToast('Select a student to add', 'error'); return; }
+  try {
+    const res = await api(`/groups/${groupId}/members`, { method: 'POST', body: JSON.stringify({ user_id: radio.value }) });
+    showToast(res.message || 'Member added!', 'success');
+    closeGroupModal();
+    loadGroupDetail(groupId);
+  } catch (e) { /* handled by api helper */ }
+}
+
+async function showChangeLeaderModal(groupId) {
+  const g = state.selectedGroup;
+  const members = (g && g.members) || [];
+  if (members.length < 2) { showToast('Only one member in this group.', 'warning'); return; }
+  const overlay = document.createElement('div');
+  overlay.id = 'group-modal-overlay';
+  overlay.className = 'fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4';
+  overlay.innerHTML = `
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto fade-in">
+    <div class="p-5 border-b border-gray-100 flex items-center justify-between">
+      <h3 class="font-bold text-gray-900">Change Group Leader</h3>
+      <button onclick="closeGroupModal()" class="w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700 flex items-center justify-center"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="p-5 space-y-4">
+      <p class="text-xs text-gray-500">Select the new leader from the group members. The current leader (${g.leader_name || 'Unknown'}) will become a regular member.</p>
+      <div class="mt-2 max-h-60 overflow-y-auto space-y-2">
+        ${members.map(m => `
+          <label class="flex items-center gap-3 p-3 rounded-xl border border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors ${m.is_leader ? 'opacity-50 pointer-events-none' : ''}">
+            <input type="radio" name="leader-radio" class="leader-radio accent-amber-500" value="${m.id}" ${m.is_leader ? 'disabled' : ''} />
+            <span class="w-8 h-8 bg-amber-100 text-amber-700 rounded-lg flex items-center justify-center text-xs font-bold shrink-0">${m.name.charAt(0)}</span>
+            <span class="min-w-0">
+              <span class="block text-xs font-semibold text-gray-800 truncate">${m.name}${m.is_leader ? ' <span class="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-bold uppercase">Current Leader</span>' : ''}</span>
+              <span class="block text-[11px] text-gray-500 truncate">${m.email}</span>
+            </span>
+          </label>
+        `).join('')}
+      </div>
+      <button onclick="submitChangeLeader('${groupId}')" class="w-full bg-amber-500 hover:bg-amber-600 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-md transition-all"><i class="fas fa-crown mr-1"></i>Make Leader</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function submitChangeLeader(groupId) {
+  const radio = document.querySelector('.leader-radio:checked');
+  if (!radio) { showToast('Select a new leader', 'error'); return; }
+  try {
+    const res = await api(`/groups/${groupId}/leader`, { method: 'PUT', body: JSON.stringify({ leader_id: radio.value }) });
+    showToast(res.message || 'Leader updated!', 'success');
+    closeGroupModal();
+    loadGroupDetail(groupId);
+  } catch (e) { /* handled by api helper */ }
+}
+
+async function approveGroup(id) {
+  try {
+    const res = await api(`/groups/${id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'approved' }) });
+    showToast(res.message || 'Group approved', 'success');
+    if (state.currentView === 'group-profile') loadGroupDetail(id); else loadGroups();
+  } catch (e) { /* handled by api helper */ }
+}
+
+async function rejectGroup(id) {
+  try {
+    const res = await api(`/groups/${id}/status`, { method: 'PUT', body: JSON.stringify({ status: 'rejected' }) });
+    showToast(res.message || 'Group rejected', 'warning');
+    if (state.currentView === 'group-profile') loadGroupDetail(id); else loadGroups();
+  } catch (e) { /* handled by api helper */ }
+}
+
+async function removeGroupMember(groupId, userId) {
+  if (!confirm('Remove this member from the group?')) return;
+  try {
+    const res = await api(`/groups/${groupId}/members/${userId}`, { method: 'DELETE' });
+    showToast(res.message || 'Member removed', 'success');
+    loadGroupDetail(groupId);
+  } catch (e) { /* handled by api helper */ }
+}
+
+async function deleteGroup(id) {
+  if (!confirm('Delete this group? All members will be removed from the group. This cannot be undone.')) return;
+  try {
+    const res = await api(`/groups/${id}`, { method: 'DELETE' });
+    showToast(res.message || 'Group deleted', 'success');
+    navigate('groups');
+    loadGroups();
+  } catch (e) { /* handled by api helper */ }
+}
+
 // ===== New Proposal Form =====
 function showNewProposalForm() {
   if (!state.currentUser || state.currentUser.role !== 'student') {
     showToast('Only students can submit proposals.', 'error');
     return;
   }
+
+  const g = state.myGroup;
+  if (!g) {
+    showToast('Create a group first. Only the leader of an approved group can submit a proposal.', 'error');
+    navigate('groups');
+    return;
+  }
+  if (g.status !== 'approved') {
+    showToast(`Your group "${g.name}" is ${g.status}. Wait for coordinator approval before submitting.`, 'warning');
+    return;
+  }
+  if (g.leader_id !== state.currentUser.id) {
+    showToast('Only the group leader can submit the proposal.', 'error');
+    return;
+  }
+
   const container = document.getElementById('proposals-list');
   if (!container) return;
 
   container.innerHTML = `
   <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm fade-in max-w-2xl mx-auto">
+    <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 mb-4 text-xs text-emerald-700 flex items-start gap-2">
+      <i class="fas fa-users mt-0.5"></i>
+      <span>Submitting on behalf of group <b>"${g.name}"</b> — this proposal will cover all group members.</span>
+    </div>
     <h2 class="text-lg font-bold text-gray-900 mb-4">Submit New FYP Proposal</h2>
     <form id="new-proposal-form" class="space-y-4">
       <div>
@@ -2527,6 +3762,8 @@ function showNewProposalForm() {
 function attachEventListeners() {
   const isCoordinator = state.currentUser && state.currentUser.role === 'coordinator';
 
+  attachProjectPaste();
+
   if (state.pendingRefreshTimer) {
     clearInterval(state.pendingRefreshTimer);
     state.pendingRefreshTimer = null;
@@ -2540,9 +3777,12 @@ function attachEventListeners() {
       }, 5000);
     }
   } else {
-    if (state.currentView === 'proposals') loadProposals();
+    if (state.currentView === 'proposals') { loadProposals(); loadMyGroup(); }
     if (state.currentView === 'projects') loadProjects();
     if (state.currentView === 'supervisors') loadSupervisors();
+    if (state.currentView === 'people') loadPeople();
+    if (state.currentView === 'groups') loadGroups();
+    if (state.currentView === 'profile') loadProfile();
   }
 }
 
@@ -2576,6 +3816,7 @@ window.runFeedbackAssistant = runFeedbackAssistant;
 window.runProjectQuery = runProjectQuery;
 window.updateProposalStatus = updateProposalStatus;
 window.updateProjectHealth = updateProjectHealth;
+window.updateProjectProgress = updateProjectProgress;
 window.assignProposalSupervisor = assignProposalSupervisor;
 window.assignProjectSupervisor = assignProjectSupervisor;
 window.showQuickAssignModal = showQuickAssignModal;
@@ -2585,10 +3826,40 @@ window.submitAssignModal = submitAssignModal;
 window.showAddSupervisorModal = showAddSupervisorModal;
 window.closeAddSupervisorModal = closeAddSupervisorModal;
 window.submitAddSupervisorModal = submitAddSupervisorModal;
-window.endorseProposal = endorseProposal;
-window.scheduleSupervisorMeeting = scheduleSupervisorMeeting;
-window.triggerCoordinatorBroadcast = triggerCoordinatorBroadcast;
-window.showAddTaskModal = showAddTaskModal;
+window.loadGroups = loadGroups;
+window.loadGroupDetail = loadGroupDetail;
+window.loadProfile = loadProfile;
+window.triggerAvatarUpload = triggerAvatarUpload;
+window.handleAvatarUpload = handleAvatarUpload;
+window.showEditProfileModal = showEditProfileModal;
+window.submitEditProfile = submitEditProfile;
+window.showCreateGroupModal = showCreateGroupModal;
+window.closeGroupModal = closeGroupModal;
+window.updateMemberPicker = updateMemberPicker;
+window.submitCreateGroup = submitCreateGroup;
+window.showAddMemberModal = showAddMemberModal;
+window.submitAddMember = submitAddMember;
+window.showChangeLeaderModal = showChangeLeaderModal;
+window.submitChangeLeader = submitChangeLeader;
+window.approveGroup = approveGroup;
+window.rejectGroup = rejectGroup;
+window.removeGroupMember = removeGroupMember;
+window.deleteGroup = deleteGroup;
+window.toggleLinkForm = toggleLinkForm;
+window.addProjectLink = addProjectLink;
+window.deleteProjectLink = deleteProjectLink;
+window.handleGalleryUpload = handleGalleryUpload;
+window.deleteProjectMedia = deleteProjectMedia;
+window.openLightbox = openLightbox;
+window.closeLightbox = closeLightbox;
+window.addOverallFeedback = addOverallFeedback;
+window.addMediaFeedback = addMediaFeedback;
+window.setPeopleTab = setPeopleTab;
+window.setPeopleView = setPeopleView;
+window.setPeopleSearch = setPeopleSearch;
+window.clearPeopleSearch = clearPeopleSearch;
+window.deletePeopleStudent = deletePeopleStudent;
+window.deletePeopleGroup = deletePeopleGroup;
 
 // Initial Application Render
 render();

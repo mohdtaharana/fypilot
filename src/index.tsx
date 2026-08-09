@@ -5,6 +5,7 @@ import { proposalRoutes } from './modules/proposals/proposal.routes';
 import { projectRoutes } from './modules/projects/project.routes';
 import { userRoutes } from './modules/auth/user.routes';
 import { dashboardRoutes } from './modules/dashboard/dashboard.routes';
+import { groupRoutes } from './modules/groups/group.routes';
 import type { Env } from './modules/ai/ai.types';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -18,6 +19,7 @@ app.route('/api/proposals', proposalRoutes);
 app.route('/api/projects', projectRoutes);
 app.route('/api/users', userRoutes);
 app.route('/api/dashboard', dashboardRoutes);
+app.route('/api/groups', groupRoutes);
 
 // Health check
 app.get('/api/health', (c) => {
@@ -65,7 +67,7 @@ function getIndexHTML(): string {
 <body class="bg-gray-50 min-h-screen">
   <div id="app"></div>
   <div id="toast-container" class="toast"></div>
-  <script src="/static/app.js?v=20260808-3"></script>
+  <script src="/static/app.js?v=20260809-groups3"></script>
 </body>
 </html>`;
 }

@@ -65,38 +65,6 @@ CREATE TABLE IF NOT EXISTS project_members (
   FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
--- Milestones
-CREATE TABLE IF NOT EXISTS milestones (
-  id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL,
-  title TEXT NOT NULL,
-  description TEXT,
-  due_date TEXT,
-  completed_at TEXT,
-  status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'completed', 'overdue')),
-  created_at TEXT DEFAULT (datetime('now')),
-  FOREIGN KEY (project_id) REFERENCES projects(id)
-);
-
--- Tasks
-CREATE TABLE IF NOT EXISTS tasks (
-  id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL,
-  milestone_id TEXT,
-  title TEXT NOT NULL,
-  description TEXT,
-  assigned_to TEXT,
-  status TEXT DEFAULT 'todo' CHECK(status IN ('todo', 'in_progress', 'completed', 'overdue')),
-  priority TEXT DEFAULT 'medium' CHECK(priority IN ('low', 'medium', 'high', 'urgent')),
-  due_date TEXT,
-  completed_at TEXT,
-  created_at TEXT DEFAULT (datetime('now')),
-  updated_at TEXT DEFAULT (datetime('now')),
-  FOREIGN KEY (project_id) REFERENCES projects(id),
-  FOREIGN KEY (milestone_id) REFERENCES milestones(id),
-  FOREIGN KEY (assigned_to) REFERENCES users(id)
-);
-
 -- Meetings
 CREATE TABLE IF NOT EXISTS meetings (
   id TEXT PRIMARY KEY,
@@ -161,7 +129,7 @@ CREATE TABLE IF NOT EXISTS feedback (
   from_user_id TEXT NOT NULL,
   to_user_id TEXT,
   content TEXT NOT NULL,
-  type TEXT DEFAULT 'general' CHECK(type IN ('general', 'proposal_review', 'progress_review', 'milestone_review')),
+  type TEXT DEFAULT 'general' CHECK(type IN ('general', 'proposal_review', 'progress_review')),
   ai_assisted INTEGER DEFAULT 0,
   created_at TEXT DEFAULT (datetime('now')),
   FOREIGN KEY (proposal_id) REFERENCES proposals(id),
@@ -175,10 +143,6 @@ CREATE INDEX IF NOT EXISTS idx_proposals_submitted_by ON proposals(submitted_by)
 CREATE INDEX IF NOT EXISTS idx_proposals_status ON proposals(status);
 CREATE INDEX IF NOT EXISTS idx_projects_supervisor ON projects(supervisor_id);
 CREATE INDEX IF NOT EXISTS idx_projects_health ON projects(health);
-CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
-CREATE INDEX IF NOT EXISTS idx_tasks_assigned ON tasks(assigned_to);
-CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
-CREATE INDEX IF NOT EXISTS idx_milestones_project ON milestones(project_id);
 CREATE INDEX IF NOT EXISTS idx_meetings_project ON meetings(project_id);
 CREATE INDEX IF NOT EXISTS idx_ai_cache_entity ON ai_analysis_cache(entity_type, entity_id, analysis_type);
 CREATE INDEX IF NOT EXISTS idx_ai_cache_hash ON ai_analysis_cache(input_hash);

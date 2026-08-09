@@ -72,10 +72,8 @@ Frontend UI
 | POST | `/api/proposals` | Create proposal |
 | PUT | `/api/proposals/:id` | Update proposal |
 | GET | `/api/projects` | List projects |
-| GET | `/api/projects/:id` | Get project with tasks/milestones |
+| GET | `/api/projects/:id` | Get project detail |
 | POST | `/api/projects` | Create project |
-| POST | `/api/projects/:id/tasks` | Add task |
-| POST | `/api/projects/:id/milestones` | Add milestone |
 | GET | `/api/users` | List active users |
 | GET | `/api/users/:id` | Get user detail |
 | GET | `/api/users/supervisors/stats` | Supervisor workload stats |
@@ -105,8 +103,6 @@ Frontend UI
 - **proposals** — FYP proposal submissions
 - **projects** — Active projects with health tracking
 - **project_members** — Student-project mapping
-- **milestones** — Project milestones with deadlines
-- **tasks** — Granular tasks with assignment and status
 - **meetings** — Scheduled/completed supervisor meetings
 - **ai_analysis_cache** — Cached AI results with hash invalidation
 - **ai_audit_log** — Complete AI operation audit trail
@@ -121,7 +117,7 @@ Frontend UI
 4. **System** automatically checks for similar projects → Similarity report
 5. **Coordinator** views supervisor recommendations → AI-matched supervisors
 6. **Supervisor** uses feedback assistant → AI-suggested review points
-7. **Project** is created → Track tasks, milestones, meetings
+7. **Project** is created → Track progress, health & supervisor meetings
 8. **System** monitors health → Risk prediction with explanations
 9. **Any user** views project insights → Data-driven insights
 10. **Any user** asks questions → Natural language project query
