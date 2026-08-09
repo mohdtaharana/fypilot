@@ -1,14 +1,14 @@
 {
-  "name": "synapse",
+  "name": "fypilot",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "wrangler pages dev dist --d1=synapse-production --local --ip 0.0.0.0 --port 3000",
+    "preview": "wrangler pages dev dist --d1=fypilot-production --local --ip 0.0.0.0 --port 3000",
     "deploy": "npm run build && wrangler pages deploy dist",
     "cf-typegen": "wrangler types --env-interface CloudflareBindings",
-    "db:migrate:local": "wrangler d1 migrations apply synapse-production --local",
-    "db:seed": "wrangler d1 execute synapse-production --local --file=./seed.sql",
+    "db:migrate:local": "wrangler d1 migrations apply fypilot-production --local",
+    "db:seed": "wrangler d1 execute fypilot-production --local --file=./seed.sql",
     "db:reset": "npm run db:migrate:local && npm run db:seed"
   },
   "dependencies": {

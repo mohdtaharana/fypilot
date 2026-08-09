@@ -1,7 +1,7 @@
-# Synapse — AI Intelligence Layer for FYP Management
+# FYPilot — AI Intelligence Layer for FYP Management
 
 ## Project Overview
-- **Name**: Synapse
+- **Name**: FYPilot
 - **Goal**: An AI-powered Final Year Project (FYP) management platform for universities
 - **Core Innovation**: Real AI intelligence layer using Google Gemma 4 via OpenRouter, deeply integrated with application data
 - **Tech Stack**: Hono + TypeScript + Cloudflare Pages + D1 Database + Tailwind CSS

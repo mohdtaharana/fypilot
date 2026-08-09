@@ -1,4 +1,4 @@
--- Synapse Demo Data - Seed File
+-- FYPilot Demo Data - Seed File
 
 -- Coordinators
 INSERT OR IGNORE INTO users (id, email, name, role, department) VALUES

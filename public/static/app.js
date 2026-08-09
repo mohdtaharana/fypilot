@@ -1,10 +1,10 @@
-// Synapse — AI Intelligence Layer for FYP Management
+// FYPilot — AI Intelligence Layer for FYP Management
 // Frontend Application with Responsive Design, Authentication, Interactive Charts & Executive Role Powers
 
 const API_BASE = '/api';
 
 // ===== State Management =====
-const storedUserJson = localStorage.getItem('synapse_user');
+const storedUserJson = localStorage.getItem('fypilot_user');
 let initialUser = null;
 try {
   if (storedUserJson) initialUser = JSON.parse(storedUserJson);
@@ -163,25 +163,25 @@ function renderLoginScreen() {
   const isRegisterMode = state.loginMode === 'register';
 
   return `
-  <div class="min-h-screen bg-gradient-to-br from-slate-900 via-synapse-900 to-indigo-950 flex items-center justify-center p-4 sm:p-6 relative overflow-hidden">
+  <div class="min-h-screen bg-gradient-to-br from-slate-900 via-fypilot-900 to-indigo-950 flex items-center justify-center p-4 sm:p-6 relative overflow-hidden">
     <!-- Ambient Blur Background Elements -->
-    <div class="absolute -top-32 -left-32 w-96 h-96 bg-synapse-500/20 rounded-full blur-3xl pointer-events-none"></div>
+    <div class="absolute -top-32 -left-32 w-96 h-96 bg-fypilot-500/20 rounded-full blur-3xl pointer-events-none"></div>
     <div class="absolute -bottom-32 -right-32 w-96 h-96 bg-indigo-500/20 rounded-full blur-3xl pointer-events-none"></div>
 
     <div class="w-full max-w-md bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20 p-6 sm:p-8 fade-in relative z-10">
       
       <!-- Brand Header -->
       <div class="text-center mb-6">
-        <div class="w-14 h-14 bg-gradient-to-tr from-synapse-600 to-indigo-600 rounded-2xl mx-auto flex items-center justify-center shadow-lg shadow-synapse-500/30 mb-3">
+        <div class="w-14 h-14 bg-gradient-to-tr from-fypilot-600 to-indigo-600 rounded-2xl mx-auto flex items-center justify-center shadow-lg shadow-fypilot-500/30 mb-3">
           <i class="fas fa-brain text-white text-2xl"></i>
         </div>
-        <h1 class="text-2xl font-bold text-gray-900 tracking-tight">Welcome to Synapse</h1>
+        <h1 class="text-2xl font-bold text-gray-900 tracking-tight">Welcome to FYPilot</h1>
         <p class="text-xs text-gray-500 mt-1 font-medium">AI Intelligence Layer for FYP Management</p>
       </div>
 
       <!-- Login / Register Tab Toggle -->
       <div class="flex bg-gray-100 p-1 rounded-xl gap-1 mb-6">
-        <button onclick="setLoginMode('login')" class="flex-1 py-2 rounded-lg text-xs font-bold transition-all ${!isRegisterMode ? 'bg-white text-synapse-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}">
+        <button onclick="setLoginMode('login')" class="flex-1 py-2 rounded-lg text-xs font-bold transition-all ${!isRegisterMode ? 'bg-white text-fypilot-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}">
           <i class="fas fa-sign-in-alt mr-1.5"></i> Sign In
         </button>
         <button onclick="setLoginMode('register')" class="flex-1 py-2 rounded-lg text-xs font-bold transition-all ${isRegisterMode ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}">
@@ -265,7 +265,7 @@ function renderLoginScreen() {
         </button>
       </form>
 
-      <p class="text-center text-xs text-gray-500 mt-4">Already have an account? <button onclick="setLoginMode('login')" class="text-synapse-600 font-semibold hover:underline">Sign In</button></p>
+      <p class="text-center text-xs text-gray-500 mt-4">Already have an account? <button onclick="setLoginMode('login')" class="text-fypilot-600 font-semibold hover:underline">Sign In</button></p>
       ` : `
       <!-- LOGIN FORM -->
       <!-- Login Form -->
@@ -278,7 +278,7 @@ function renderLoginScreen() {
             </div>
             <input type="email" id="login-email" required 
                    value="${state.loginPrefillEmail || accountInfo.defaultEmail}"
-                   class="w-full pl-9 pr-3 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-synapse-500 focus:bg-white transition-all" 
+                   class="w-full pl-9 pr-3 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-fypilot-500 focus:bg-white transition-all" 
                    placeholder="your@email.edu" />
           </div>
         </div>
@@ -291,7 +291,7 @@ function renderLoginScreen() {
             </div>
             <input type="password" id="login-password" required 
                    value="${state.loginPrefillEmail ? '' : accountInfo.passwordHint}"
-                   class="w-full pl-9 pr-10 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-synapse-500 focus:bg-white transition-all" 
+                   class="w-full pl-9 pr-10 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-fypilot-500 focus:bg-white transition-all" 
                    placeholder="Enter your account password" />
             <button type="button" onclick="togglePasswordVisibility()" class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600">
               <i class="fas fa-eye text-sm" id="toggle-pwd-icon"></i>
@@ -300,7 +300,7 @@ function renderLoginScreen() {
         </div>
 
         <button type="submit" id="btn-login" 
-                class="w-full py-3 px-4 bg-gradient-to-r from-synapse-600 to-indigo-600 hover:from-synapse-700 hover:to-indigo-700 text-white font-semibold rounded-xl text-sm shadow-lg shadow-synapse-500/25 transition-all duration-200 flex items-center justify-center gap-2">
+                class="w-full py-3 px-4 bg-gradient-to-r from-fypilot-600 to-indigo-600 hover:from-fypilot-700 hover:to-indigo-700 text-white font-semibold rounded-xl text-sm shadow-lg shadow-fypilot-500/25 transition-all duration-200 flex items-center justify-center gap-2">
           <span>Sign In</span>
           <i class="fas fa-arrow-right text-xs"></i>
         </button>
@@ -314,9 +314,9 @@ function renderLoginScreen() {
             <i class="fas fa-user-shield text-indigo-500"></i>
             <span class="font-semibold text-indigo-700 text-[11px]">Coordinator</span>
           </button>
-          <button onclick="quickLogin('supervisor')" class="flex flex-col items-center gap-1 p-2 rounded-xl bg-synapse-50 hover:bg-synapse-100 border border-synapse-100 transition-all">
-            <i class="fas fa-user-tie text-synapse-500"></i>
-            <span class="font-semibold text-synapse-700 text-[11px]">Supervisor</span>
+          <button onclick="quickLogin('supervisor')" class="flex flex-col items-center gap-1 p-2 rounded-xl bg-fypilot-50 hover:bg-fypilot-100 border border-fypilot-100 transition-all">
+            <i class="fas fa-user-tie text-fypilot-500"></i>
+            <span class="font-semibold text-fypilot-700 text-[11px]">Supervisor</span>
           </button>
           <button onclick="quickLogin('student')" class="flex flex-col items-center gap-1 p-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-100 transition-all">
             <i class="fas fa-user-graduate text-emerald-500"></i>
@@ -405,7 +405,7 @@ function attachLoginEventListeners() {
         state.currentUser = res.data.user;
         state.isAuthenticated = true;
         state.loginPrefillEmail = '';
-        localStorage.setItem('synapse_user', JSON.stringify(res.data.user));
+        localStorage.setItem('fypilot_user', JSON.stringify(res.data.user));
         showToast(`Welcome back, ${res.data.user.name || 'User'}!`, 'success');
         render();
       } else {
@@ -561,7 +561,7 @@ function logout() {
   state.isAuthenticated = false;
   state.currentUser = null;
   state.mobileMenuOpen = false;
-  localStorage.removeItem('synapse_user');
+  localStorage.removeItem('fypilot_user');
   showToast('Logged out successfully', 'info');
   render();
 }
@@ -594,18 +594,18 @@ function renderNav() {
         
         <!-- Brand Logo & Title -->
         <div class="flex items-center gap-2 cursor-pointer" onclick="navigate('dashboard')">
-          <div class="w-9 h-9 bg-gradient-to-tr from-synapse-600 to-indigo-600 rounded-xl flex items-center justify-center shadow-md shadow-synapse-500/20">
+          <div class="w-9 h-9 bg-gradient-to-tr from-fypilot-600 to-indigo-600 rounded-xl flex items-center justify-center shadow-md shadow-fypilot-500/20">
             <i class="fas fa-brain text-white text-base"></i>
           </div>
-          <span class="text-xl font-bold text-gray-900 tracking-tight">Synapse</span>
-          <span class="text-[10px] bg-synapse-100 text-synapse-700 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">AI</span>
+          <span class="text-xl font-bold text-gray-900 tracking-tight">FYPilot</span>
+          <span class="text-[10px] bg-fypilot-100 text-fypilot-700 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">AI</span>
         </div>
 
         <!-- Desktop Navigation Links -->
         <div class="hidden md:flex items-center gap-1 overflow-x-auto flex-nowrap scrollbar-none">
           ${links.map(l => `
             <button onclick="navigate('${l.id}')" 
-                    class="px-3 py-2 rounded-xl text-sm font-semibold transition-all duration-150 flex items-center gap-2 whitespace-nowrap ${state.currentView === l.id || state.currentView.startsWith(l.id) ? 'bg-synapse-50 text-synapse-700' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}">
+                    class="px-3 py-2 rounded-xl text-sm font-semibold transition-all duration-150 flex items-center gap-2 whitespace-nowrap ${state.currentView === l.id || state.currentView.startsWith(l.id) ? 'bg-fypilot-50 text-fypilot-700' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}">
               <i class="fas ${l.icon} text-sm"></i>
               <span>${l.label}</span>
             </button>
@@ -620,7 +620,7 @@ function renderNav() {
           </span>
           
           <div class="flex items-center gap-2 bg-gray-50 border rounded-xl px-3 py-1.5">
-            <div class="w-7 h-7 rounded-lg flex items-center justify-center text-white text-xs font-bold overflow-hidden ${state.currentUser.avatar ? '' : 'bg-synapse-600'}">
+            <div class="w-7 h-7 rounded-lg flex items-center justify-center text-white text-xs font-bold overflow-hidden ${state.currentUser.avatar ? '' : 'bg-fypilot-600'}">
               ${state.currentUser.avatar ? `<img src="${state.currentUser.avatar}" alt="" class="w-full h-full object-cover" />` : (state.currentUser.name || 'U').charAt(0)}
             </div>
             <span class="text-xs font-semibold text-gray-800 truncate max-w-[120px]">${state.currentUser.name || 'User'}</span>
@@ -647,7 +647,7 @@ function renderNav() {
     <div class="md:hidden bg-white border-t border-gray-200 px-4 py-3 space-y-2 fade-in shadow-lg">
         <div class="flex items-center justify-between pb-3 border-b border-gray-100">
         <div class="flex items-center gap-2">
-          <div class="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm font-bold overflow-hidden ${state.currentUser.avatar ? '' : 'bg-synapse-600'}">
+          <div class="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm font-bold overflow-hidden ${state.currentUser.avatar ? '' : 'bg-fypilot-600'}">
             ${state.currentUser.avatar ? `<img src="${state.currentUser.avatar}" alt="" class="w-full h-full object-cover" />` : (state.currentUser.name || 'U').charAt(0)}
           </div>
           <div>
@@ -663,8 +663,8 @@ function renderNav() {
       <div class="space-y-1 pt-1">
         ${links.map(l => `
           <button onclick="navigate('${l.id}')" 
-                  class="w-full text-left px-3.5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-3 transition-colors ${state.currentView === l.id || state.currentView.startsWith(l.id) ? 'bg-synapse-50 text-synapse-700' : 'text-gray-700 hover:bg-gray-50'}">
-            <i class="fas ${l.icon} w-5 text-center text-synapse-500"></i>
+                  class="w-full text-left px-3.5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-3 transition-colors ${state.currentView === l.id || state.currentView.startsWith(l.id) ? 'bg-fypilot-50 text-fypilot-700' : 'text-gray-700 hover:bg-gray-50'}">
+            <i class="fas ${l.icon} w-5 text-center text-fypilot-500"></i>
             <span>${l.label}</span>
           </button>
         `).join('')}
@@ -815,18 +815,18 @@ function renderPeople() {
     <div class="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm flex flex-col lg:flex-row items-center gap-3">
       <div class="flex bg-gray-100 p-1 rounded-xl gap-1">
         ${['all', 'groups', 'students'].map(t => `
-          <button id="people-tab-${t}" onclick="setPeopleTab('${t}')" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${state.peopleTab === t ? 'bg-white text-synapse-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}">
+          <button id="people-tab-${t}" onclick="setPeopleTab('${t}')" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${state.peopleTab === t ? 'bg-white text-fypilot-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}">
             ${t === 'all' ? 'All' : t.charAt(0).toUpperCase() + t.slice(1)}
           </button>`).join('')}
       </div>
       <div class="relative flex-1 w-full">
         <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400"><i class="fas fa-search text-xs"></i></div>
-        <input id="people-search" value="${state.peopleSearch}" oninput="setPeopleSearch(this.value)" placeholder="Search name, email, group..." class="w-full pl-9 pr-8 py-2 bg-gray-50 border border-gray-300 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-synapse-500 focus:bg-white transition-all" />
+        <input id="people-search" value="${state.peopleSearch}" oninput="setPeopleSearch(this.value)" placeholder="Search name, email, group..." class="w-full pl-9 pr-8 py-2 bg-gray-50 border border-gray-300 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-fypilot-500 focus:bg-white transition-all" />
         ${state.peopleSearch ? `<button onclick="clearPeopleSearch()" title="Clear search" class="absolute inset-y-0 right-0 pr-3 text-gray-400 hover:text-gray-600"><i class="fas fa-times-circle text-xs"></i></button>` : ''}
       </div>
       <div class="flex bg-gray-100 p-1 rounded-xl gap-1">
-        <button id="people-view-grid" onclick="setPeopleView('grid')" title="Grid view" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${state.peopleView === 'grid' ? 'bg-white text-synapse-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}"><i class="fas fa-th-large"></i></button>
-        <button id="people-view-table" onclick="setPeopleView('table')" title="Table view" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${state.peopleView === 'table' ? 'bg-white text-synapse-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}"><i class="fas fa-list"></i></button>
+        <button id="people-view-grid" onclick="setPeopleView('grid')" title="Grid view" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${state.peopleView === 'grid' ? 'bg-white text-fypilot-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}"><i class="fas fa-th-large"></i></button>
+        <button id="people-view-table" onclick="setPeopleView('table')" title="Table view" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${state.peopleView === 'table' ? 'bg-white text-fypilot-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}"><i class="fas fa-list"></i></button>
       </div>
     </div>
 
@@ -858,7 +858,7 @@ function renderPeopleStats(data) {
     </div>
     <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
       <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-xl bg-synapse-100 text-synapse-600 flex items-center justify-center"><i class="fas fa-people-arrows"></i></div>
+        <div class="w-10 h-10 rounded-xl bg-fypilot-100 text-fypilot-600 flex items-center justify-center"><i class="fas fa-people-arrows"></i></div>
         <div>
           <div class="text-2xl font-extrabold text-gray-900">${data.summary.total_groups}</div>
           <div class="text-xs font-semibold text-gray-500">Groups</div>
@@ -1082,7 +1082,7 @@ function renderPeopleResults() {
   container.innerHTML = `
     <div class="flex items-center justify-between flex-wrap gap-2">
       <p class="text-[11px] text-gray-400 font-medium">
-        ${q ? `Searching for "<span class="text-synapse-700 font-bold">${escapeHtml(state.peopleSearch)}</span>" — ` : ''}${totalShown} result${totalShown === 1 ? '' : 's'}
+        ${q ? `Searching for "<span class="text-fypilot-700 font-bold">${escapeHtml(state.peopleSearch)}</span>" — ` : ''}${totalShown} result${totalShown === 1 ? '' : 's'}
       </p>
     </div>
     ${showGroups ? (filterGroups.length ? renderPeopleGroupsSection(filterGroups) : '<p class="text-xs text-gray-400 bg-white rounded-2xl border border-gray-200 p-6 text-center">No groups match your search.</p>') : ''}
@@ -1110,7 +1110,7 @@ async function loadPeople() {
 
 function setPeopleTab(tab) {
   state.peopleTab = tab;
-  const active = 'bg-white text-synapse-700 shadow-sm';
+  const active = 'bg-white text-fypilot-700 shadow-sm';
   const inactive = 'text-gray-500 hover:text-gray-800';
   ['all', 'groups', 'students'].forEach(t => {
     const btn = document.getElementById(`people-tab-${t}`);
@@ -1121,7 +1121,7 @@ function setPeopleTab(tab) {
 
 function setPeopleView(view) {
   state.peopleView = view;
-  const active = 'bg-white text-synapse-700 shadow-sm';
+  const active = 'bg-white text-fypilot-700 shadow-sm';
   const inactive = 'text-gray-500 hover:text-gray-800';
   const gridBtn = document.getElementById('people-view-grid');
   const tableBtn = document.getElementById('people-view-table');
@@ -1166,7 +1166,7 @@ function renderSupervisorDashboard() {
   return `
   <div class="fade-in space-y-6">
     <!-- Hero Banner -->
-    <div class="bg-gradient-to-r from-blue-900 via-synapse-900 to-slate-900 text-white rounded-2xl p-6 shadow-xl border border-blue-500/20">
+    <div class="bg-gradient-to-r from-blue-900 via-fypilot-900 to-slate-900 text-white rounded-2xl p-6 shadow-xl border border-blue-500/20">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <span class="inline-flex items-center gap-1.5 bg-blue-500/30 border border-blue-400/30 text-blue-200 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">
@@ -1225,7 +1225,7 @@ function renderSupervisorDashboard() {
       <div class="flex flex-wrap gap-2">
         <button onclick="navigate('projects')" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"><i class="fas fa-stethoscope"></i> Override Project Health</button>
         <button onclick="navigate('proposals')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"><i class="fas fa-check-circle"></i> Approve Proposals</button>
-        <button onclick="navigate('supervisors')" class="bg-synapse-600 hover:bg-synapse-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"><i class="fas fa-users"></i> Colleagues</button>
+        <button onclick="navigate('supervisors')" class="bg-fypilot-600 hover:bg-fypilot-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"><i class="fas fa-users"></i> Colleagues</button>
       </div>
     </div>
   </div>`;
@@ -1318,7 +1318,7 @@ function renderProposals() {
         <p class="text-gray-500 text-xs sm:text-sm mt-0.5">Manage and evaluate FYP project submissions</p>
       </div>
       ${state.currentUser && state.currentUser.role === 'student' ? `
-      <button onclick="showNewProposalForm()" class="bg-synapse-600 hover:bg-synapse-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-synapse-500/20 transition-all flex items-center justify-center gap-2 shrink-0">
+      <button onclick="showNewProposalForm()" class="bg-fypilot-600 hover:bg-fypilot-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-fypilot-500/20 transition-all flex items-center justify-center gap-2 shrink-0">
         <i class="fas fa-plus"></i>
         <span>New Proposal</span>
       </button>
@@ -1398,21 +1398,21 @@ function renderProposalDetail() {
 
     <!-- SUPERVISOR POWER CONTROLS FOR SUPERVISORS -->
     ${state.currentUser.role === 'supervisor' ? `
-    <div class="bg-gradient-to-r from-blue-950 to-synapse-900 text-white rounded-2xl p-5 shadow-xl border border-synapse-500/30 space-y-3">
+    <div class="bg-gradient-to-r from-blue-950 to-fypilot-900 text-white rounded-2xl p-5 shadow-xl border border-fypilot-500/30 space-y-3">
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2">
-          <div class="w-8 h-8 bg-synapse-500 rounded-xl flex items-center justify-center text-white text-sm shadow-md">
+          <div class="w-8 h-8 bg-fypilot-500 rounded-xl flex items-center justify-center text-white text-sm shadow-md">
             <i class="fas fa-user-tie"></i>
           </div>
           <div>
             <h3 class="font-bold text-sm text-white">Supervisor Assessment & Review Station</h3>
-            <p class="text-[11px] text-synapse-200">Provide academic endorsement or guidance notes</p>
+            <p class="text-[11px] text-fypilot-200">Provide academic endorsement or guidance notes</p>
           </div>
         </div>
-        <span class="text-[10px] bg-synapse-500/30 border border-synapse-400/40 text-synapse-200 px-2.5 py-1 rounded-full font-bold uppercase tracking-wider">Supervisor Power</span>
+        <span class="text-[10px] bg-fypilot-500/30 border border-fypilot-400/40 text-fypilot-200 px-2.5 py-1 rounded-full font-bold uppercase tracking-wider">Supervisor Power</span>
       </div>
 
-      <div class="flex flex-wrap gap-2 pt-2 border-t border-synapse-800/60">
+      <div class="flex flex-wrap gap-2 pt-2 border-t border-fypilot-800/60">
         <button onclick="runFeedbackAssistant('${p.id}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-md">
           <i class="fas fa-lightbulb"></i> Generate Structured Review Notes
         </button>
@@ -1426,14 +1426,14 @@ function renderProposalDetail() {
           <h1 class="text-xl sm:text-2xl font-bold text-gray-900">${p.title}</h1>
           <p class="text-xs sm:text-sm text-gray-500 mt-1 flex items-center gap-2">
             <span><i class="fas fa-user text-gray-400 mr-1"></i>Submitted by ${p.submitter_name || 'Unknown'}</span>
-            ${p.group_name ? `<span class="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-synapse-50 text-synapse-700 border border-synapse-100"><i class="fas fa-users mr-1"></i>Group: ${p.group_name}</span>` : ''}
+            ${p.group_name ? `<span class="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-fypilot-50 text-fypilot-700 border border-fypilot-100"><i class="fas fa-users mr-1"></i>Group: ${p.group_name}</span>` : ''}
           </p>
           ${p.groupMembers && p.groupMembers.length ? `
           <div class="mt-3 flex flex-wrap items-center gap-2">
-            <span class="text-[11px] font-bold text-gray-500 uppercase tracking-wider"><i class="fas fa-users text-synapse-500 mr-1"></i>Team:</span>
+            <span class="text-[11px] font-bold text-gray-500 uppercase tracking-wider"><i class="fas fa-users text-fypilot-500 mr-1"></i>Team:</span>
             ${p.groupMembers.map(m => `
-              <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold ${m.is_leader ? 'bg-amber-50 border border-amber-200 text-amber-700' : 'bg-synapse-50 border border-synapse-100 text-synapse-700'}">
-                ${m.is_leader ? '<i class="fas fa-crown text-amber-500"></i>' : '<i class="fas fa-user text-synapse-400"></i>'}${m.name}
+              <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold ${m.is_leader ? 'bg-amber-50 border border-amber-200 text-amber-700' : 'bg-fypilot-50 border border-fypilot-100 text-fypilot-700'}">
+                ${m.is_leader ? '<i class="fas fa-crown text-amber-500"></i>' : '<i class="fas fa-user text-fypilot-400"></i>'}${m.name}
               </span>`).join('')}
           </div>` : ''}
         </div>
@@ -1455,10 +1455,10 @@ function renderProposalDetail() {
       <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
         <div class="flex items-center justify-between mb-4">
           <h3 class="font-bold text-gray-900 flex items-center gap-2 text-sm sm:text-base">
-            <i class="fas fa-brain text-synapse-500"></i>
+            <i class="fas fa-brain text-fypilot-500"></i>
             AI Proposal Quality Analysis
           </h3>
-          <button onclick="runProposalAnalysis('${p.id}')" class="text-xs bg-synapse-50 text-synapse-700 border border-synapse-200 px-3 py-1.5 rounded-xl hover:bg-synapse-100 font-semibold transition-colors">
+          <button onclick="runProposalAnalysis('${p.id}')" class="text-xs bg-fypilot-50 text-fypilot-700 border border-fypilot-200 px-3 py-1.5 rounded-xl hover:bg-fypilot-100 font-semibold transition-colors">
             <i class="fas fa-play mr-1"></i>Analyze
           </button>
         </div>
@@ -1471,10 +1471,10 @@ function renderProposalDetail() {
       <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
         <div class="flex items-center justify-between mb-4">
           <h3 class="font-bold text-gray-900 flex items-center gap-2 text-sm sm:text-base">
-            <i class="fas fa-copy text-synapse-500"></i>
+            <i class="fas fa-copy text-fypilot-500"></i>
             Project Similarity Analysis
           </h3>
-          <button onclick="runSimilarityAnalysis('${p.id}')" class="text-xs bg-synapse-50 text-synapse-700 border border-synapse-200 px-3 py-1.5 rounded-xl hover:bg-synapse-100 font-semibold transition-colors">
+          <button onclick="runSimilarityAnalysis('${p.id}')" class="text-xs bg-fypilot-50 text-fypilot-700 border border-fypilot-200 px-3 py-1.5 rounded-xl hover:bg-fypilot-100 font-semibold transition-colors">
             <i class="fas fa-search mr-1"></i>Check
           </button>
         </div>
@@ -1488,10 +1488,10 @@ function renderProposalDetail() {
     <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
       <div class="flex items-center justify-between mb-4">
         <h3 class="font-bold text-gray-900 flex items-center gap-2 text-sm sm:text-base">
-          <i class="fas fa-user-check text-synapse-500"></i>
+          <i class="fas fa-user-check text-fypilot-500"></i>
           AI Supervisor Recommendation
         </h3>
-        <button onclick="runSupervisorRecommendation('${p.id}')" class="text-xs bg-synapse-50 text-synapse-700 border border-synapse-200 px-3 py-1.5 rounded-xl hover:bg-synapse-100 font-semibold transition-colors">
+        <button onclick="runSupervisorRecommendation('${p.id}')" class="text-xs bg-fypilot-50 text-fypilot-700 border border-fypilot-200 px-3 py-1.5 rounded-xl hover:bg-fypilot-100 font-semibold transition-colors">
           <i class="fas fa-magic mr-1"></i>Recommend
         </button>
       </div>
@@ -1504,10 +1504,10 @@ function renderProposalDetail() {
     <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
       <div class="flex items-center justify-between mb-4">
         <h3 class="font-bold text-gray-900 flex items-center gap-2 text-sm sm:text-base">
-          <i class="fas fa-comment-dots text-synapse-500"></i>
+          <i class="fas fa-comment-dots text-fypilot-500"></i>
           AI Feedback Assistant
         </h3>
-        <button onclick="runFeedbackAssistant('${p.id}')" class="text-xs bg-synapse-50 text-synapse-700 border border-synapse-200 px-3 py-1.5 rounded-xl hover:bg-synapse-100 font-semibold transition-colors">
+        <button onclick="runFeedbackAssistant('${p.id}')" class="text-xs bg-fypilot-50 text-fypilot-700 border border-fypilot-200 px-3 py-1.5 rounded-xl hover:bg-fypilot-100 font-semibold transition-colors">
           <i class="fas fa-lightbulb mr-1"></i>Suggest
         </button>
       </div>
@@ -1612,7 +1612,7 @@ function renderProjectDetail() {
     <!-- Project Progress Tracker -->
     <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm space-y-4">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-        <h3 class="font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-chart-line text-synapse-500"></i> Project Progress Tracker</h3>
+        <h3 class="font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-chart-line text-fypilot-500"></i> Project Progress Tracker</h3>
         <span class="text-[11px] font-bold px-2.5 py-1 rounded-full ${(p.progress || 0) >= 100 ? 'bg-emerald-100 text-emerald-700' : (p.progress || 0) >= 50 ? 'bg-sky-100 text-sky-700' : 'bg-amber-100 text-amber-700'}">${p.progress || 0}% Complete</span>
       </div>
 
@@ -1621,19 +1621,19 @@ function renderProjectDetail() {
         <span>${100 - (p.progress || 0)}% remaining</span>
       </div>
       <div class="w-full bg-gray-100 rounded-full h-3.5 p-0.5 border">
-        <div class="bg-gradient-to-r from-synapse-500 to-indigo-600 h-full rounded-full transition-all duration-500" style="width: ${p.progress || 0}%"></div>
+        <div class="bg-gradient-to-r from-fypilot-500 to-indigo-600 h-full rounded-full transition-all duration-500" style="width: ${p.progress || 0}%"></div>
       </div>
 
       ${isStudentMember ? `
       <div class="pt-3 border-t border-gray-100">
         <div class="flex items-center justify-between text-xs font-semibold text-gray-700 mb-2">
           <span>Report Your Progress</span>
-          <span id="progress-preview" class="text-synapse-700">${p.progress || 0}% done &bull; ${100 - (p.progress || 0)}% left</span>
+          <span id="progress-preview" class="text-fypilot-700">${p.progress || 0}% done &bull; ${100 - (p.progress || 0)}% left</span>
         </div>
         <input id="project-progress-slider" type="range" min="0" max="100" step="1" value="${p.progress || 0}"
                oninput="document.getElementById('progress-preview').textContent = this.value + '% done &bull; ' + (100 - parseInt(this.value)) + '% left'"
-               class="w-full accent-synapse-600">
-        <button onclick="updateProjectProgress('${p.id}')" class="mt-2 w-full sm:w-auto bg-synapse-600 hover:bg-synapse-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-md">
+               class="w-full accent-fypilot-600">
+        <button onclick="updateProjectProgress('${p.id}')" class="mt-2 w-full sm:w-auto bg-fypilot-600 hover:bg-fypilot-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-md">
           <i class="fas fa-save"></i> Update Progress
         </button>
       </div>
@@ -1643,20 +1643,20 @@ function renderProjectDetail() {
     <!-- Project Links -->
     <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm space-y-4">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-        <h3 class="font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-link text-synapse-500"></i> Project Links</h3>
-        ${isStudentMember ? `<button onclick="toggleLinkForm()" class="bg-synapse-600 hover:bg-synapse-700 text-white px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"><i class="fas fa-plus"></i> Add Link</button>` : ''}
+        <h3 class="font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-link text-fypilot-500"></i> Project Links</h3>
+        ${isStudentMember ? `<button onclick="toggleLinkForm()" class="bg-fypilot-600 hover:bg-fypilot-700 text-white px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"><i class="fas fa-plus"></i> Add Link</button>` : ''}
       </div>
       <div id="link-form" class="hidden space-y-2">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <input id="link-label" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" placeholder="Label (e.g. GitHub Repo)" />
-          <input id="link-url" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" placeholder="https://..." />
+          <input id="link-label" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none" placeholder="Label (e.g. GitHub Repo)" />
+          <input id="link-url" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none" placeholder="https://..." />
         </div>
-        <button onclick="addProjectLink('${p.id}')" class="bg-synapse-600 hover:bg-synapse-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-md"><i class="fas fa-save mr-1"></i>Save Link</button>
+        <button onclick="addProjectLink('${p.id}')" class="bg-fypilot-600 hover:bg-fypilot-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-md"><i class="fas fa-save mr-1"></i>Save Link</button>
       </div>
       <div class="space-y-2">
         ${(p.links || []).length ? p.links.map(l => `
           <div class="flex items-center justify-between gap-3 p-3 rounded-xl border border-gray-100 bg-gray-50">
-            <a href="${l.url}" target="_blank" rel="noopener" class="text-xs font-semibold text-synapse-700 hover:underline truncate flex items-center gap-2 min-w-0"><i class="fas fa-external-link-alt text-[10px] shrink-0"></i><span class="truncate">${l.label}</span></a>
+            <a href="${l.url}" target="_blank" rel="noopener" class="text-xs font-semibold text-fypilot-700 hover:underline truncate flex items-center gap-2 min-w-0"><i class="fas fa-external-link-alt text-[10px] shrink-0"></i><span class="truncate">${l.label}</span></a>
             ${isStudentMember ? `<button onclick="deleteProjectLink('${p.id}','${l.id}')" class="text-gray-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 shrink-0" title="Remove"><i class="fas fa-trash text-xs"></i></button>` : ''}
           </div>
         `).join('') : '<p class="text-xs text-gray-400">No links added yet.</p>'}
@@ -1666,15 +1666,15 @@ function renderProjectDetail() {
     <!-- Project Gallery -->
     <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm space-y-4">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-        <h3 class="font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-images text-synapse-500"></i> Screenshots & Gallery</h3>
+        <h3 class="font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-images text-fypilot-500"></i> Screenshots & Gallery</h3>
         ${isStudentMember ? `
         <div class="flex flex-wrap gap-2 items-center">
           <span class="text-[11px] text-gray-400 flex items-center gap-1"><i class="fas fa-keyboard"></i> Ctrl+V to paste screenshot</span>
-          <button onclick="document.getElementById('gallery-file-input').click()" class="bg-synapse-600 hover:bg-synapse-700 text-white px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"><i class="fas fa-upload"></i> Upload Image</button>
+          <button onclick="document.getElementById('gallery-file-input').click()" class="bg-fypilot-600 hover:bg-fypilot-700 text-white px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"><i class="fas fa-upload"></i> Upload Image</button>
         </div>` : ''}
       </div>
       <input type="file" id="gallery-file-input" accept="image/*" class="hidden" onchange="handleGalleryUpload('${p.id}', event)" />
-      ${isStudentMember ? `<input id="gallery-caption" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" placeholder="Caption for next upload (optional)" />` : ''}
+      ${isStudentMember ? `<input id="gallery-caption" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none" placeholder="Caption for next upload (optional)" />` : ''}
       <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
         ${(p.media || []).length ? p.media.map(m => `
           <div class="group relative rounded-xl overflow-hidden border border-gray-200 bg-gray-100 cursor-pointer" onclick="openLightbox('${p.id}', '${m.id}')">
@@ -1690,12 +1690,12 @@ function renderProjectDetail() {
     <!-- Overall Project Feedback -->
     <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm space-y-4">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-        <h3 class="font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-comments text-synapse-500"></i> Overall Project Feedback</h3>
+        <h3 class="font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-comments text-fypilot-500"></i> Overall Project Feedback</h3>
         <span class="text-[11px] text-gray-400">By Coordinator / Supervisor</span>
       </div>
       ${['coordinator', 'supervisor'].includes(state.currentUser.role) ? `
       <div class="flex flex-col sm:flex-row gap-2">
-        <input id="overall-feedback-input" class="flex-1 border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" placeholder="Write feedback for the project team..." />
+        <input id="overall-feedback-input" class="flex-1 border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none" placeholder="Write feedback for the project team..." />
         <button onclick="addOverallFeedback('${p.id}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"><i class="fas fa-paper-plane"></i> Post</button>
       </div>` : ''}
       <div class="space-y-3">
@@ -1720,10 +1720,10 @@ function renderProjectDetail() {
       <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
         <div class="flex items-center justify-between mb-4">
           <h3 class="font-bold text-gray-900 flex items-center gap-2 text-sm sm:text-base">
-            <i class="fas fa-heartbeat text-synapse-500"></i>
+            <i class="fas fa-heartbeat text-fypilot-500"></i>
             AI Risk Prediction
           </h3>
-          <button onclick="runRiskAnalysis('${p.id}')" class="text-xs bg-synapse-50 text-synapse-700 border border-synapse-200 px-3 py-1.5 rounded-xl hover:bg-synapse-100 font-semibold transition-colors">
+          <button onclick="runRiskAnalysis('${p.id}')" class="text-xs bg-fypilot-50 text-fypilot-700 border border-fypilot-200 px-3 py-1.5 rounded-xl hover:bg-fypilot-100 font-semibold transition-colors">
             <i class="fas fa-stethoscope mr-1"></i>Analyze
           </button>
         </div>
@@ -1735,10 +1735,10 @@ function renderProjectDetail() {
       <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
         <div class="flex items-center justify-between mb-4">
           <h3 class="font-bold text-gray-900 flex items-center gap-2 text-sm sm:text-base">
-            <i class="fas fa-lightbulb text-synapse-500"></i>
+            <i class="fas fa-lightbulb text-fypilot-500"></i>
             AI Insights
           </h3>
-          <button onclick="runProjectInsights('${p.id}')" class="text-xs bg-synapse-50 text-synapse-700 border border-synapse-200 px-3 py-1.5 rounded-xl hover:bg-synapse-100 font-semibold transition-colors">
+          <button onclick="runProjectInsights('${p.id}')" class="text-xs bg-fypilot-50 text-fypilot-700 border border-fypilot-200 px-3 py-1.5 rounded-xl hover:bg-fypilot-100 font-semibold transition-colors">
             <i class="fas fa-sync mr-1"></i>Generate
           </button>
         </div>
@@ -1752,10 +1752,10 @@ function renderProjectDetail() {
     <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
       <div class="flex items-center justify-between mb-4">
         <h3 class="font-bold text-gray-900 flex items-center gap-2 text-sm sm:text-base">
-          <i class="fas fa-file-contract text-synapse-500"></i>
+          <i class="fas fa-file-contract text-fypilot-500"></i>
           AI Project Executive Summary
         </h3>
-        <button onclick="runProjectSummary('${p.id}')" class="text-xs bg-synapse-50 text-synapse-700 border border-synapse-200 px-3 py-1.5 rounded-xl hover:bg-synapse-100 font-semibold transition-colors">
+        <button onclick="runProjectSummary('${p.id}')" class="text-xs bg-fypilot-50 text-fypilot-700 border border-fypilot-200 px-3 py-1.5 rounded-xl hover:bg-fypilot-100 font-semibold transition-colors">
           <i class="fas fa-scroll mr-1"></i>Summarize
         </button>
       </div>
@@ -1767,14 +1767,14 @@ function renderProjectDetail() {
     <!-- Project Assistant Query -->
     <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm space-y-3">
       <h3 class="font-bold text-gray-900 flex items-center gap-2 text-sm sm:text-base">
-        <i class="fas fa-robot text-synapse-500"></i>
+        <i class="fas fa-robot text-fypilot-500"></i>
         AI Project Assistant
       </h3>
       <div class="flex flex-col sm:flex-row gap-2">
         <input type="text" id="project-query-input" placeholder="Ask about this project (e.g., 'What is the current health status?')" 
-               class="flex-1 border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-synapse-500" 
+               class="flex-1 border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-fypilot-500" 
                onkeydown="if(event.key==='Enter')runProjectQuery('${p.id}')">
-        <button onclick="runProjectQuery('${p.id}')" class="bg-synapse-600 hover:bg-synapse-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold transition-all">
+        <button onclick="runProjectQuery('${p.id}')" class="bg-fypilot-600 hover:bg-fypilot-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold transition-all">
           <i class="fas fa-paper-plane mr-1"></i> Ask
         </button>
       </div>
@@ -2252,10 +2252,10 @@ function openLightbox(projectId, mediaId) {
       <img src="${media.data}" class="w-full rounded-xl border border-gray-200" />
       <p class="text-[11px] text-gray-400 mt-2">Uploaded by ${media.uploader_name || 'Unknown'} &bull; ${new Date(media.created_at).toLocaleString()}</p>
       <div class="mt-4">
-        <h4 class="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2 flex items-center gap-2"><i class="fas fa-comments text-synapse-500"></i> Feedback on this image</h4>
+        <h4 class="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2 flex items-center gap-2"><i class="fas fa-comments text-fypilot-500"></i> Feedback on this image</h4>
         ${isExec ? `
         <div class="flex flex-col sm:flex-row gap-2 mb-3">
-          <input id="media-feedback-input" class="flex-1 border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" placeholder="Comment on this screenshot..." />
+          <input id="media-feedback-input" class="flex-1 border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none" placeholder="Comment on this screenshot..." />
           <button onclick="addMediaFeedback('${projectId}','${mediaId}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all"><i class="fas fa-paper-plane"></i> Post</button>
         </div>` : ''}
         <div class="space-y-2">
@@ -2521,8 +2521,8 @@ async function runProjectQuery(projectId) {
 
 function renderAILoading(message) {
   return `
-  <div class="flex items-center gap-3 py-3 text-synapse-700">
-    <div class="w-5 h-5 border-2 border-synapse-500 border-t-transparent rounded-full animate-spin"></div>
+  <div class="flex items-center gap-3 py-3 text-fypilot-700">
+    <div class="w-5 h-5 border-2 border-fypilot-500 border-t-transparent rounded-full animate-spin"></div>
     <span class="text-xs font-semibold">${message}</span>
   </div>`;
 }
@@ -2630,12 +2630,12 @@ function renderSupervisorRecommendationResult(data) {
   return `
   <div class="space-y-2.5 pt-1">
     ${(data.recommendations || []).map((rec, i) => `
-      <div class="border rounded-xl p-3 ${i === 0 ? 'border-synapse-300 bg-synapse-50/60' : 'border-gray-200'}">
+      <div class="border rounded-xl p-3 ${i === 0 ? 'border-fypilot-300 bg-fypilot-50/60' : 'border-gray-200'}">
         <div class="flex items-center justify-between">
           <span class="text-xs font-bold text-gray-900">${i + 1}. ${rec.supervisorName}</span>
-          <span class="text-xs font-extrabold text-synapse-700">Match: ${rec.matchScore}%</span>
+          <span class="text-xs font-extrabold text-fypilot-700">Match: ${rec.matchScore}%</span>
         </div>
-        <ul class="text-xs text-gray-600 mt-1.5 space-y-1">${(rec.reasons || []).map(r => `<li class="flex items-center gap-1.5"><i class="fas fa-check text-synapse-500 text-[10px]"></i><span>${r}</span></li>`).join('')}</ul>
+        <ul class="text-xs text-gray-600 mt-1.5 space-y-1">${(rec.reasons || []).map(r => `<li class="flex items-center gap-1.5"><i class="fas fa-check text-fypilot-500 text-[10px]"></i><span>${r}</span></li>`).join('')}</ul>
       </div>
     `).join('')}
   </div>`;
@@ -2684,7 +2684,7 @@ function renderFeedbackResult(data) {
     ${sections.filter(s => data[s.key] && data[s.key].length > 0).map(s => `
       <div>
         <h5 class="text-xs font-bold text-gray-700 mb-1 flex items-center gap-1.5">
-          <i class="fas ${s.icon} text-synapse-500"></i> ${s.label}
+          <i class="fas ${s.icon} text-fypilot-500"></i> ${s.label}
         </h5>
         <ul class="text-xs text-gray-600 space-y-1 pl-2">
           ${data[s.key].map(item => `<li class="flex items-start gap-1.5"><i class="fas fa-chevron-right text-gray-400 text-[10px] mt-1"></i><span>${item}</span></li>`).join('')}
@@ -2696,14 +2696,14 @@ function renderFeedbackResult(data) {
 
 function renderQueryResult(data, question) {
   const sources = (data.sources && data.sources.length) ? data.sources : (data.dataUsed || []);
-  const sourceTags = sources.length ? `<div class="flex flex-wrap gap-1 mt-2 pt-2 border-t border-synapse-200/60">${sources.map(s => `<span class="text-[10px] bg-synapse-100/90 text-synapse-800 px-2 py-0.5 rounded-md font-medium"><i class="fas fa-database mr-1 text-[9px] text-synapse-600"></i>${s}</span>`).join('')}</div>` : '';
+  const sourceTags = sources.length ? `<div class="flex flex-wrap gap-1 mt-2 pt-2 border-t border-fypilot-200/60">${sources.map(s => `<span class="text-[10px] bg-fypilot-100/90 text-fypilot-800 px-2 py-0.5 rounded-md font-medium"><i class="fas fa-database mr-1 text-[9px] text-fypilot-600"></i>${s}</span>`).join('')}</div>` : '';
   const formattedAnswer = (data.answer || '')
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
     .replace(/\n/g, '<br>');
 
   return `
-  <div class="bg-synapse-50/70 border border-synapse-200 rounded-xl p-4 space-y-2 mt-2 shadow-xs fade-in">
-    <p class="text-xs font-bold text-synapse-900 flex items-center gap-1.5"><i class="fas fa-user-circle text-synapse-600"></i> ${question}</p>
+  <div class="bg-fypilot-50/70 border border-fypilot-200 rounded-xl p-4 space-y-2 mt-2 shadow-xs fade-in">
+    <p class="text-xs font-bold text-fypilot-900 flex items-center gap-1.5"><i class="fas fa-user-circle text-fypilot-600"></i> ${question}</p>
     <div class="text-xs text-gray-800 leading-relaxed space-y-1">${formattedAnswer}</div>
     ${sourceTags}
   </div>`;
@@ -2922,7 +2922,7 @@ async function loadProposals() {
             <div class="min-w-0 flex-1">
               <h3 class="text-xs sm:text-sm font-bold text-gray-900 truncate">${p.title}</h3>
               <p class="text-[11px] text-gray-500 mt-0.5">${p.submitter_name || 'Unknown'} &bull; ${new Date(p.created_at).toLocaleDateString()}</p>
-              ${p.group_name ? `<span class="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-synapse-50 text-synapse-700 border border-synapse-100"><i class="fas fa-users"></i>${p.group_name}</span>` : ''}
+              ${p.group_name ? `<span class="inline-flex items-center gap-1 mt-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-fypilot-50 text-fypilot-700 border border-fypilot-100"><i class="fas fa-users"></i>${p.group_name}</span>` : ''}
             </div>
             <span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold ${statusColors[p.status] || 'bg-gray-100'}">${p.status.replace('_', ' ')}</span>
           </div>
@@ -3015,7 +3015,7 @@ async function loadSupervisors() {
         return `
         <div class="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm">
           <div class="flex items-center gap-3">
-            <div class="w-10 h-10 bg-synapse-100 text-synapse-700 rounded-xl flex items-center justify-center font-bold">
+            <div class="w-10 h-10 bg-fypilot-100 text-fypilot-700 rounded-xl flex items-center justify-center font-bold">
               <i class="fas fa-user-tie"></i>
             </div>
             <div>
@@ -3045,7 +3045,7 @@ function renderGroups() {
         <p class="text-gray-500 text-xs sm:text-sm mt-0.5">${role === 'coordinator' ? 'Review and approve FYP student teams (max 4 members each)' : 'Your FYP team — get it approved to submit one joint proposal'}</p>
       </div>
       ${role === 'student' ? `
-      <button onclick="showCreateGroupModal()" class="bg-synapse-600 hover:bg-synapse-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-synapse-500/20 transition-all flex items-center justify-center gap-2">
+      <button onclick="showCreateGroupModal()" class="bg-fypilot-600 hover:bg-fypilot-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-fypilot-500/20 transition-all flex items-center justify-center gap-2">
         <i class="fas fa-plus"></i>
         <span>Create Group</span>
       </button>` : ''}
@@ -3075,15 +3075,15 @@ function renderGroupProfile() {
       <i class="fas fa-arrow-left text-xs"></i> Back to Groups
     </button>
 
-    <div class="bg-gradient-to-r from-synapse-900 via-indigo-900 to-slate-900 text-white rounded-2xl p-6 shadow-xl border border-synapse-500/20">
+    <div class="bg-gradient-to-r from-fypilot-900 via-indigo-900 to-slate-900 text-white rounded-2xl p-6 shadow-xl border border-fypilot-500/20">
       <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
         <div class="min-w-0">
           <div class="flex items-center gap-2 flex-wrap">
             <h1 class="text-xl sm:text-2xl font-bold">${g.name}</h1>
             <span class="px-3 py-0.5 rounded-full text-[11px] font-bold border ${statusColors[g.status] || 'bg-gray-100'} capitalize">${g.status}</span>
           </div>
-          <p class="text-sm text-synapse-200 mt-2"><i class="fas fa-crown text-amber-400 mr-1.5"></i>Group Leader: <span class="font-semibold text-white">${g.leader_name || 'Unknown'}</span></p>
-          <p class="text-[11px] text-synapse-300 mt-1"><i class="fas fa-users mr-1.5"></i>${members.length}/4 members &bull; Max group size: ${g.max_members || 4}</p>
+          <p class="text-sm text-fypilot-200 mt-2"><i class="fas fa-crown text-amber-400 mr-1.5"></i>Group Leader: <span class="font-semibold text-white">${g.leader_name || 'Unknown'}</span></p>
+          <p class="text-[11px] text-fypilot-300 mt-1"><i class="fas fa-users mr-1.5"></i>${members.length}/4 members &bull; Max group size: ${g.max_members || 4}</p>
         </div>
         <div class="flex flex-wrap gap-2 shrink-0">
           ${isExecutive && g.status === 'pending' ? `
@@ -3098,14 +3098,14 @@ function renderGroupProfile() {
 
     <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
       <div class="flex items-center justify-between gap-3">
-        <h2 class="font-bold text-gray-900"><i class="fas fa-users text-synapse-500 mr-2"></i>Group Members</h2>
-        ${canManage ? `<button onclick="showAddMemberModal('${g.id}')" class="bg-synapse-600 hover:bg-synapse-700 text-white px-3 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5"><i class="fas fa-user-plus"></i> Add Member</button>` : ''}
+        <h2 class="font-bold text-gray-900"><i class="fas fa-users text-fypilot-500 mr-2"></i>Group Members</h2>
+        ${canManage ? `<button onclick="showAddMemberModal('${g.id}')" class="bg-fypilot-600 hover:bg-fypilot-700 text-white px-3 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5"><i class="fas fa-user-plus"></i> Add Member</button>` : ''}
       </div>
       <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
         ${members.map(m => `
           <div class="flex items-center justify-between p-3 rounded-xl border border-gray-200">
             <div class="flex items-center gap-3 min-w-0">
-              <div class="w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold shrink-0 ${m.is_leader ? 'bg-amber-100 text-amber-700' : 'bg-synapse-100 text-synapse-700'}">${(m.name || '?').charAt(0)}</div>
+              <div class="w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold shrink-0 ${m.is_leader ? 'bg-amber-100 text-amber-700' : 'bg-fypilot-100 text-fypilot-700'}">${(m.name || '?').charAt(0)}</div>
               <div class="min-w-0">
                 <div class="text-xs font-bold text-gray-900 truncate flex items-center gap-1.5">${m.name}${m.is_leader ? '<span class="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-bold uppercase">Leader</span>' : ''}</div>
                 <div class="text-[11px] text-gray-500 truncate">${m.email}${m.department ? ' &bull; ' + m.department : ''}</div>
@@ -3134,10 +3134,10 @@ function renderGroupProfile() {
 function renderProfile() {
   const u = state.currentUser;
   const roleIcons = { coordinator: 'fa-crown', supervisor: 'fa-user-tie', student: 'fa-user-graduate' };
-  const roleColors = { coordinator: 'from-purple-600 to-indigo-700', supervisor: 'from-blue-600 to-synapse-700', student: 'from-emerald-600 to-teal-700' };
+  const roleColors = { coordinator: 'from-purple-600 to-indigo-700', supervisor: 'from-blue-600 to-fypilot-700', student: 'from-emerald-600 to-teal-700' };
   return `
   <div class="fade-in space-y-6">
-    <div class="bg-gradient-to-r ${roleColors[u.role] || 'from-synapse-600 to-indigo-700'} text-white rounded-2xl p-6 shadow-xl relative overflow-hidden">
+    <div class="bg-gradient-to-r ${roleColors[u.role] || 'from-fypilot-600 to-indigo-700'} text-white rounded-2xl p-6 shadow-xl relative overflow-hidden">
       <div class="absolute -right-10 -top-10 w-48 h-48 bg-white/10 rounded-full blur-2xl pointer-events-none"></div>
       <div class="relative flex flex-col sm:flex-row sm:items-center gap-5">
         <div class="relative shrink-0 w-fit">
@@ -3182,7 +3182,7 @@ async function handleAvatarUpload(e) {
     try {
       await api(`/users/${state.currentUser.id}/avatar`, { method: 'PUT', body: JSON.stringify({ avatar: reader.result }) });
       state.currentUser.avatar = reader.result;
-      localStorage.setItem('synapse_user', JSON.stringify(state.currentUser));
+      localStorage.setItem('fypilot_user', JSON.stringify(state.currentUser));
       showToast('Profile photo updated!', 'success');
       render();
     } catch (err) { /* handled by api helper */ }
@@ -3204,21 +3204,21 @@ function showEditProfileModal() {
     <div class="p-5 space-y-4">
       <div>
         <label class="block text-xs font-semibold text-gray-700 mb-1">Full Name</label>
-        <input id="edit-name" value="${u.name || ''}" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" />
+        <input id="edit-name" value="${u.name || ''}" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none" />
       </div>
       <div>
         <label class="block text-xs font-semibold text-gray-700 mb-1">Email</label>
-        <input id="edit-email" type="email" value="${u.email || ''}" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" />
+        <input id="edit-email" type="email" value="${u.email || ''}" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none" />
       </div>
       <div class="pt-2 border-t border-gray-100">
         <label class="block text-xs font-semibold text-gray-700 mb-1">New Password <span class="text-gray-400 font-normal">(optional, min 6 chars)</span></label>
-        <input id="edit-password" type="password" placeholder="Leave blank to keep current password" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" />
+        <input id="edit-password" type="password" placeholder="Leave blank to keep current password" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none" />
       </div>
       <div>
         <label class="block text-xs font-semibold text-gray-700 mb-1">Confirm Password</label>
-        <input id="edit-password-confirm" type="password" placeholder="Re-enter new password" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" />
+        <input id="edit-password-confirm" type="password" placeholder="Re-enter new password" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none" />
       </div>
-      <button onclick="submitEditProfile()" class="w-full bg-synapse-600 hover:bg-synapse-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-synapse-500/20 transition-all"><i class="fas fa-save mr-1"></i>Save Changes</button>
+      <button onclick="submitEditProfile()" class="w-full bg-fypilot-600 hover:bg-fypilot-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-fypilot-500/20 transition-all"><i class="fas fa-save mr-1"></i>Save Changes</button>
     </div>
   </div>`;
   document.body.appendChild(overlay);
@@ -3241,7 +3241,7 @@ async function submitEditProfile() {
   try {
     const res = await api(`/users/${state.currentUser.id}`, { method: 'PUT', body: JSON.stringify(payload) });
     state.currentUser = { ...state.currentUser, ...res.data };
-    localStorage.setItem('synapse_user', JSON.stringify(state.currentUser));
+    localStorage.setItem('fypilot_user', JSON.stringify(state.currentUser));
     showToast(res.message || 'Profile updated!', 'success');
     closeGroupModal();
     render();
@@ -3262,10 +3262,10 @@ async function loadGroups() {
       if (state.groups.length === 0) {
         container.innerHTML = `
         <div class="bg-white rounded-2xl border-2 border-dashed border-gray-200 p-8 text-center">
-          <div class="w-16 h-16 bg-synapse-100 text-synapse-600 rounded-2xl mx-auto flex items-center justify-center text-2xl mb-3"><i class="fas fa-users"></i></div>
+          <div class="w-16 h-16 bg-fypilot-100 text-fypilot-600 rounded-2xl mx-auto flex items-center justify-center text-2xl mb-3"><i class="fas fa-users"></i></div>
           <h3 class="font-bold text-gray-900">You are not in a group yet</h3>
           <p class="text-xs text-gray-500 mt-1 max-w-sm mx-auto">Form a team of up to 4 students. Once the coordinator approves it, the group leader can submit one joint FYP proposal.</p>
-          <button onclick="showCreateGroupModal()" class="mt-4 bg-synapse-600 hover:bg-synapse-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-synapse-500/20 transition-all flex items-center gap-2 mx-auto">
+          <button onclick="showCreateGroupModal()" class="mt-4 bg-fypilot-600 hover:bg-fypilot-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-fypilot-500/20 transition-all flex items-center gap-2 mx-auto">
             <i class="fas fa-plus"></i> Create Group
           </button>
         </div>`;
@@ -3358,7 +3358,7 @@ function renderProposalGroupBanner() {
       </div>`;
   } else {
     banner.innerHTML = `
-      <div class="bg-synapse-50 border border-synapse-200 rounded-2xl p-3.5 text-xs text-synapse-700 flex items-start gap-2">
+      <div class="bg-fypilot-50 border border-fypilot-200 rounded-2xl p-3.5 text-xs text-fypilot-700 flex items-start gap-2">
         <i class="fas fa-info-circle mt-0.5"></i>
         <span>You are a member of approved group "<b>${g.name}</b>". Only the group leader can submit the proposal.</span>
       </div>`;
@@ -3387,7 +3387,7 @@ async function loadProfile() {
       const g = groups[0] || null;
       sections += `
         <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
-          <h3 class="font-bold text-gray-900 text-sm mb-3"><i class="fas fa-users text-synapse-500 mr-2"></i>My Group</h3>
+          <h3 class="font-bold text-gray-900 text-sm mb-3"><i class="fas fa-users text-fypilot-500 mr-2"></i>My Group</h3>
           ${g ? `
             <div class="space-y-2">
               <div class="flex items-center justify-between gap-2">
@@ -3395,16 +3395,16 @@ async function loadProfile() {
                 <span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${g.status === 'approved' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : g.status === 'rejected' ? 'bg-rose-100 text-rose-700 border-rose-200' : 'bg-amber-100 text-amber-700 border-amber-200'} capitalize">${g.status}</span>
               </div>
               <p class="text-[11px] text-gray-500">Leader: ${g.leader_name || 'Unknown'} &bull; ${g.member_count || 1}/4 members</p>
-              <button onclick="loadGroupDetail('${g.id}')" class="mt-2 w-full border border-gray-200 px-3 py-2 rounded-xl text-xs font-semibold text-synapse-700 hover:bg-synapse-50 transition-colors">Open Group Profile</button>
+              <button onclick="loadGroupDetail('${g.id}')" class="mt-2 w-full border border-gray-200 px-3 py-2 rounded-xl text-xs font-semibold text-fypilot-700 hover:bg-fypilot-50 transition-colors">Open Group Profile</button>
             </div>
           ` : `
             <p class="text-xs text-gray-500">You are not in a group yet.</p>
-            <button onclick="navigate('groups')" class="mt-2 w-full bg-synapse-600 hover:bg-synapse-700 text-white px-3 py-2 rounded-xl text-xs font-semibold transition-all">Create Group</button>
+            <button onclick="navigate('groups')" class="mt-2 w-full bg-fypilot-600 hover:bg-fypilot-700 text-white px-3 py-2 rounded-xl text-xs font-semibold transition-all">Create Group</button>
           `}
         </div>
 
         <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
-          <h3 class="font-bold text-gray-900 text-sm mb-3"><i class="fas fa-file-alt text-synapse-500 mr-2"></i>My Proposals</h3>
+          <h3 class="font-bold text-gray-900 text-sm mb-3"><i class="fas fa-file-alt text-fypilot-500 mr-2"></i>My Proposals</h3>
           <p class="text-3xl font-bold text-gray-900">${proposals.length}</p>
           <p class="text-[11px] text-gray-500 mt-1">${proposals.filter(p => p.status === 'approved').length} approved &bull; ${proposals.filter(p => p.status === 'submitted').length} submitted</p>
           ${proposals.length ? `
@@ -3419,7 +3419,7 @@ async function loadProfile() {
         </div>
 
         <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
-          <h3 class="font-bold text-gray-900 text-sm mb-3"><i class="fas fa-project-diagram text-synapse-500 mr-2"></i>My Projects</h3>
+          <h3 class="font-bold text-gray-900 text-sm mb-3"><i class="fas fa-project-diagram text-fypilot-500 mr-2"></i>My Projects</h3>
           <p class="text-3xl font-bold text-gray-900">${projects.length}</p>
           ${projects.length ? `<div class="mt-3 space-y-2 max-h-44 overflow-y-auto">${projects.map(pr => `<button onclick="loadProjectDetail('${pr.id}')" class="w-full text-left p-2.5 rounded-xl border border-gray-100 hover:bg-gray-50 transition-colors"><span class="block text-xs font-semibold text-gray-800 truncate">${pr.title}</span></button>`).join('')}</div>` : '<p class="text-[11px] text-gray-400 mt-1">No projects assigned yet.</p>'}
         </div>
@@ -3427,7 +3427,7 @@ async function loadProfile() {
     } else if (me.role === 'supervisor') {
       sections += `
         <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
-          <h3 class="font-bold text-gray-900 text-sm mb-3"><i class="fas fa-graduation-cap text-synapse-500 mr-2"></i>Supervision</h3>
+          <h3 class="font-bold text-gray-900 text-sm mb-3"><i class="fas fa-graduation-cap text-fypilot-500 mr-2"></i>Supervision</h3>
           <p class="text-3xl font-bold text-gray-900">${projects.length}</p>
           <p class="text-[11px] text-gray-500 mt-1">Projects currently supervised</p>
           ${projects.length ? `<div class="mt-3 space-y-2 max-h-44 overflow-y-auto">${projects.map(pr => `<button onclick="loadProjectDetail('${pr.id}')" class="w-full text-left p-2.5 rounded-xl border border-gray-100 hover:bg-gray-50 transition-colors"><span class="block text-xs font-semibold text-gray-800 truncate">${pr.title}</span></button>`).join('')}</div>` : ''}
@@ -3436,7 +3436,7 @@ async function loadProfile() {
     } else {
       sections += `
         <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
-          <h3 class="font-bold text-gray-900 text-sm mb-3"><i class="fas fa-chart-bar text-synapse-500 mr-2"></i>Coordinator Overview</h3>
+          <h3 class="font-bold text-gray-900 text-sm mb-3"><i class="fas fa-chart-bar text-fypilot-500 mr-2"></i>Coordinator Overview</h3>
           <div class="grid grid-cols-2 gap-3">
             <div class="p-4 rounded-xl bg-purple-50 border border-purple-100 text-center">
               <div class="text-2xl font-bold text-purple-700">${proposals.length}</div>
@@ -3455,13 +3455,13 @@ async function loadProfile() {
     const expertise = user.expertise ? (() => { try { return JSON.parse(user.expertise); } catch (e) { return []; } })() : [];
     sections = `
       <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
-        <h3 class="font-bold text-gray-900 text-sm mb-3"><i class="fas fa-id-card text-synapse-500 mr-2"></i>Personal Information</h3>
+        <h3 class="font-bold text-gray-900 text-sm mb-3"><i class="fas fa-id-card text-fypilot-500 mr-2"></i>Personal Information</h3>
         <dl class="space-y-2.5">
           <div class="flex justify-between gap-3"><dt class="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Full Name</dt><dd class="text-xs font-semibold text-gray-800 text-right">${user.name || me.name}</dd></div>
           <div class="flex justify-between gap-3"><dt class="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Email</dt><dd class="text-xs text-gray-800 text-right break-all">${user.email || me.email}</dd></div>
           <div class="flex justify-between gap-3"><dt class="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Role</dt><dd class="text-xs font-semibold text-gray-800 capitalize text-right">${me.role}</dd></div>
           <div class="flex justify-between gap-3"><dt class="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Department</dt><dd class="text-xs text-gray-800 text-right">${user.department || me.department || 'Computer Science'}</dd></div>
-          ${expertise.length ? `<div class="flex justify-between gap-3"><dt class="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Expertise</dt><dd class="text-xs text-gray-800 text-right flex flex-wrap gap-1 justify-end">${expertise.map(e => `<span class="bg-synapse-50 text-synapse-700 px-2 py-0.5 rounded-lg text-[10px] font-medium">${e}</span>`).join('')}</dd></div>` : ''}
+          ${expertise.length ? `<div class="flex justify-between gap-3"><dt class="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Expertise</dt><dd class="text-xs text-gray-800 text-right flex flex-wrap gap-1 justify-end">${expertise.map(e => `<span class="bg-fypilot-50 text-fypilot-700 px-2 py-0.5 rounded-lg text-[10px] font-medium">${e}</span>`).join('')}</dd></div>` : ''}
         </dl>
       </div>
     ` + sections;
@@ -3496,20 +3496,20 @@ async function showCreateGroupModal() {
       <button onclick="closeGroupModal()" class="w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700 flex items-center justify-center"><i class="fas fa-times"></i></button>
     </div>
     <div class="p-5 space-y-4">
-      <div class="bg-synapse-50 border border-synapse-100 rounded-xl p-3 text-[11px] text-synapse-700">
+      <div class="bg-fypilot-50 border border-fypilot-100 rounded-xl p-3 text-[11px] text-fypilot-700">
         You will be the <b>group leader</b> and can invite up to <b>3</b> more students (max 4 total). The coordinator must approve the group before your leader submits the joint proposal.
       </div>
       <div>
         <label class="block text-xs font-semibold text-gray-700 mb-1">Group Name *</label>
-        <input id="new-group-name" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" placeholder="e.g. AI Traffic Vision Team" />
+        <input id="new-group-name" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none" placeholder="e.g. AI Traffic Vision Team" />
       </div>
       <div>
         <label class="block text-xs font-semibold text-gray-700 mb-1">Select Members <span class="text-gray-400 font-normal">(up to 3)</span></label>
         <div id="group-member-picker" class="mt-2 max-h-60 overflow-y-auto space-y-2">
           ${candidates.length ? candidates.map(s => `
             <label class="flex items-center gap-3 p-3 rounded-xl border border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors">
-              <input type="checkbox" class="member-check accent-synapse-600" value="${s.id}" onchange="updateMemberPicker()" />
-              <span class="w-8 h-8 bg-synapse-100 text-synapse-700 rounded-lg flex items-center justify-center text-xs font-bold shrink-0">${s.name.charAt(0)}</span>
+              <input type="checkbox" class="member-check accent-fypilot-600" value="${s.id}" onchange="updateMemberPicker()" />
+              <span class="w-8 h-8 bg-fypilot-100 text-fypilot-700 rounded-lg flex items-center justify-center text-xs font-bold shrink-0">${s.name.charAt(0)}</span>
               <span class="min-w-0">
                 <span class="block text-xs font-semibold text-gray-800 truncate">${s.name}</span>
                 <span class="block text-[11px] text-gray-500 truncate">${s.email}</span>
@@ -3519,7 +3519,7 @@ async function showCreateGroupModal() {
         </div>
         <p id="group-member-hint" class="text-[11px] text-gray-400 mt-2"></p>
       </div>
-      <button onclick="submitCreateGroup()" class="w-full bg-synapse-600 hover:bg-synapse-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-synapse-500/20 transition-all"><i class="fas fa-users mr-1"></i>Create Group</button>
+      <button onclick="submitCreateGroup()" class="w-full bg-fypilot-600 hover:bg-fypilot-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-fypilot-500/20 transition-all"><i class="fas fa-users mr-1"></i>Create Group</button>
     </div>
   </div>`;
   document.body.appendChild(overlay);
@@ -3573,8 +3573,8 @@ async function showAddMemberModal(groupId) {
       <div class="mt-2 max-h-60 overflow-y-auto space-y-2">
         ${candidates.length ? candidates.map(s => `
           <label class="flex items-center gap-3 p-3 rounded-xl border border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors">
-            <input type="radio" name="add-member-radio" class="add-member-radio accent-synapse-600" value="${s.id}" />
-            <span class="w-8 h-8 bg-synapse-100 text-synapse-700 rounded-lg flex items-center justify-center text-xs font-bold shrink-0">${s.name.charAt(0)}</span>
+            <input type="radio" name="add-member-radio" class="add-member-radio accent-fypilot-600" value="${s.id}" />
+            <span class="w-8 h-8 bg-fypilot-100 text-fypilot-700 rounded-lg flex items-center justify-center text-xs font-bold shrink-0">${s.name.charAt(0)}</span>
             <span class="min-w-0">
               <span class="block text-xs font-semibold text-gray-800 truncate">${s.name}</span>
               <span class="block text-[11px] text-gray-500 truncate">${s.email}</span>
@@ -3582,7 +3582,7 @@ async function showAddMemberModal(groupId) {
           </label>
         `).join('') : '<p class="text-xs text-gray-400">No more students available.</p>'}
       </div>
-      <button onclick="submitAddMember('${groupId}')" class="w-full bg-synapse-600 hover:bg-synapse-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-md transition-all"><i class="fas fa-user-plus mr-1"></i>Add Member</button>
+      <button onclick="submitAddMember('${groupId}')" class="w-full bg-fypilot-600 hover:bg-fypilot-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-md transition-all"><i class="fas fa-user-plus mr-1"></i>Add Member</button>
     </div>
   </div>`;
   document.body.appendChild(overlay);
@@ -3713,26 +3713,26 @@ function showNewProposalForm() {
     <form id="new-proposal-form" class="space-y-4">
       <div>
         <label class="block text-xs font-semibold text-gray-700 mb-1">Project Title *</label>
-        <input name="title" required class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" placeholder="e.g. AI-Powered Smart Traffic System" />
+        <input name="title" required class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none" placeholder="e.g. AI-Powered Smart Traffic System" />
       </div>
       <div>
         <label class="block text-xs font-semibold text-gray-700 mb-1">Abstract</label>
-        <textarea name="abstract" rows="3" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" placeholder="Brief summary of your project"></textarea>
+        <textarea name="abstract" rows="3" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none" placeholder="Brief summary of your project"></textarea>
       </div>
       <div>
         <label class="block text-xs font-semibold text-gray-700 mb-1">Problem Statement</label>
-        <textarea name="problem_statement" rows="2" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" placeholder="What specific problem does this solve?"></textarea>
+        <textarea name="problem_statement" rows="2" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none" placeholder="What specific problem does this solve?"></textarea>
       </div>
       <div>
         <label class="block text-xs font-semibold text-gray-700 mb-1">Objectives</label>
-        <textarea name="objectives" rows="2" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" placeholder="List key objectives"></textarea>
+        <textarea name="objectives" rows="2" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none" placeholder="List key objectives"></textarea>
       </div>
       <div>
         <label class="block text-xs font-semibold text-gray-700 mb-1">Methodology & Tech Stack</label>
-        <input name="technologies" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-synapse-500 focus:outline-none" placeholder="e.g. Python, PyTorch, React, Node.js" />
+        <input name="technologies" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none" placeholder="e.g. Python, PyTorch, React, Node.js" />
       </div>
       <div class="flex gap-3 pt-2">
-        <button type="submit" class="bg-synapse-600 hover:bg-synapse-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-synapse-500/20 transition-all">Submit Proposal</button>
+        <button type="submit" class="bg-fypilot-600 hover:bg-fypilot-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-fypilot-500/20 transition-all">Submit Proposal</button>
         <button type="button" onclick="navigate('proposals')" class="border border-gray-300 px-4 py-2.5 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-all">Cancel</button>
       </div>
     </form>

@@ -43,8 +43,8 @@ export class AIService {
           headers: {
             'Authorization': `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://synapse-90w.pages.dev',
-            'X-Title': 'Synapse FYP Platform',
+            'HTTP-Referer': 'https://fypilot.pages.dev',
+            'X-Title': 'FYPilot FYP Platform',
           },
           body: JSON.stringify({
             model: this.model,

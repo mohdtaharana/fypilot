@@ -1,4 +1,4 @@
-// Synapse AI Module - Type Definitions
+// FYPilot AI Module - Type Definitions
 
 export interface Env {
   DB: D1Database;

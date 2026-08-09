@@ -194,8 +194,8 @@ aiRoutes.get('/debug', async (c) => {
       headers: {
         'Authorization': `Bearer ${(c.env.OPENROUTER_API_KEY || '').trim()}`,
         'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://synapse-90w.pages.dev',
-        'X-Title': 'Synapse FYP Platform',
+        'HTTP-Referer': 'https://fypilot.pages.dev',
+        'X-Title': 'FYPilot FYP Platform',
       },
       body: JSON.stringify({
         model: (c.env.OPENROUTER_MODEL || 'google/gemma-4-31b-it:free').trim(),

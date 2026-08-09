@@ -1,4 +1,4 @@
--- Synapse FYP Management Platform - Initial Schema
+-- FYPilot FYP Management Platform - Initial Schema
 
 -- Users table (students, supervisors, coordinators)
 CREATE TABLE IF NOT EXISTS users (
