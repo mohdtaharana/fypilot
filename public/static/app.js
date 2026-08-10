@@ -58,6 +58,12 @@ const state = {
   chatRecording: false,
   chatVoicePlaying: null,
   chatAtBottom: true,
+  chatSending: false,
+  chatListGlobalTimer: null,
+  chatTyping: false,
+  typingTimer: null,
+  presenceTimer: null,
+  peerPresence: null,
   chatListTimer: null,
   chatMsgTimer: null,
 };
@@ -216,11 +222,10 @@ function renderLoginScreen() {
     <div class="w-full max-w-md bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-white/20 p-6 sm:p-8 fade-in relative z-10">
       
       <!-- Brand Header -->
-      <div class="text-center mb-6">
-        <div class="w-14 h-14 bg-gradient-to-tr from-fypilot-600 to-indigo-600 rounded-2xl mx-auto flex items-center justify-center shadow-lg shadow-fypilot-500/30 mb-3">
-          <i class="fas fa-brain text-white text-2xl"></i>
+      <div class="text-center mb-6 pt-8">
+        <div class="w-52 h-52 mx-auto mb-3 flex items-center justify-center">
+          <img src="/images/fypilotlogo.png" alt="FYPilot" class="w-full h-full object-contain" />
         </div>
-        <h1 class="text-2xl font-bold text-gray-900 tracking-tight">Welcome to FYPilot</h1>
         <p class="text-xs text-gray-500 mt-1 font-medium">AI Intelligence Layer for FYP Management</p>
       </div>
 
@@ -603,6 +608,11 @@ async function loadPendingUsers() {
 }
 
 function logout() {
+  stopChatPolling();
+  if (state.notifGlobalTimer) { clearInterval(state.notifGlobalTimer); state.notifGlobalTimer = null; }
+  if (state.chatListGlobalTimer) { clearInterval(state.chatListGlobalTimer); state.chatListGlobalTimer = null; }
+  if (state.presenceTimer) { clearInterval(state.presenceTimer); state.presenceTimer = null; }
+  stopNotificationPolling();
   state.isAuthenticated = false;
   state.currentUser = null;
   state.mobileMenuOpen = false;
@@ -663,29 +673,23 @@ function renderNotificationItem(n) {
   </button>`;
 }
 
-function renderNotificationBell() {
+function renderNotificationBell(wrapId, mobile) {
+  const color = mobile ? 'text-gray-600 hover:bg-gray-100 focus:outline-none' : 'text-gray-500 hover:bg-gray-100 hover:text-fypilot-600 transition-colors';
+  const icon = mobile ? 'fa-bell text-lg' : 'fa-bell text-base';
   return `
-  <div class="relative">
-    <button onclick="toggleNotificationPanel()" title="Notifications" class="relative p-2.5 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-fypilot-600 transition-colors">
-      <i class="fas fa-bell text-base"></i>
+  <div id="${wrapId}" class="relative">
+    <button onclick="toggleNotificationPanel()" title="Notifications" class="relative p-2.5 rounded-xl ${color}">
+      <i class="fas ${icon}"></i>
       ${state.notifTotal > 0 ? `<span class="absolute top-1 right-1 min-w-4 h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">${state.notifTotal > 99 ? '99+' : state.notifTotal}</span>` : ''}
     </button>
     ${state.notifOpen ? renderNotificationPanel() : ''}
   </div>`;
 }
 
-function renderNotificationBellMobile() {
-  return `
-  <button onclick="toggleNotificationPanel()" title="Notifications" class="relative p-2.5 rounded-xl text-gray-600 hover:bg-gray-100 focus:outline-none">
-    <i class="fas fa-bell text-lg"></i>
-    ${state.notifTotal > 0 ? `<span class="absolute top-1 right-1 min-w-4 h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center">${state.notifTotal > 99 ? '99+' : state.notifTotal}</span>` : ''}
-  </button>`;
-}
-
 function renderNotificationPanel() {
   const items = state.notifications;
   return `
-  <div class="absolute right-0 top-full mt-2 w-[320px] sm:w-[360px] bg-white border border-gray-100 rounded-2xl shadow-xl shadow-gray-200/60 fade-in z-50 overflow-hidden">
+  <div class="absolute right-0 top-full mt-2 w-[calc(100vw-2rem)] max-w-[360px] bg-white border border-gray-100 rounded-2xl shadow-xl shadow-gray-200/60 fade-in z-50 overflow-hidden">
     <div class="flex items-center justify-between px-4 py-3 border-b border-gray-100">
       <h3 class="text-sm font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-bell text-fypilot-600"></i> Notifications</h3>
       ${state.notifTotal ? `<button onclick="markAllNotificationsRead()" class="text-[11px] font-semibold text-fypilot-600 hover:text-fypilot-700 flex items-center gap-1"><i class="fas fa-check-double text-[10px]"></i> Mark all read</button>` : ''}
@@ -707,11 +711,20 @@ function toggleNotificationPanel() {
   } else {
     if (state.notifTimer) { clearInterval(state.notifTimer); state.notifTimer = null; }
   }
-  render();
+  refreshNotificationBells();
+}
+
+function refreshNotificationBells() {
+  ['notif-bell-wrap', 'notif-bell-wrap-m'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.outerHTML = renderNotificationBell(id, id === 'notif-bell-wrap-m');
+  });
 }
 
 async function loadNotifications(silent) {
   if (!state.currentUser) return;
+  const prevTotal = state.notifTotal;
   try {
     const [listRes, countRes] = await Promise.all([
       api('/notifications?limit=30', { silentError: !!silent }),
@@ -723,6 +736,7 @@ async function loadNotifications(silent) {
       state.notifTotal = countRes.data.total || 0;
     }
     refreshNavBubbles();
+    if (state.notifTotal !== prevTotal || state.notifOpen) refreshNotificationBells();
   } catch (e) {}
 }
 
@@ -778,6 +792,16 @@ function navBadge(view, mobile) {
   return `<span data-notif-bubble="${view}" class="${cls}">${n > 99 ? '99+' : n}</span>`;
 }
 
+function chatNavBadge(mobile) {
+  const total = state.chats.reduce((s, c) => s + (c.unread || 0), 0);
+  if (!total) return '';
+  const cls = mobile
+    ? 'ml-auto bg-fypilot-600 text-white text-[10px] font-bold min-w-4 h-4 px-1.5 rounded-full flex items-center justify-center'
+    : 'ml-1 bg-fypilot-600 text-white text-[10px] font-bold min-w-4 h-4 px-1.5 rounded-full flex items-center justify-center';
+  const id = mobile ? 'nav-chat-badge-m' : 'nav-chat-badge';
+  return `<span id="${id}" class="${cls}">${total > 99 ? '99+' : total}</span>`;
+}
+
 function renderNav() {
   const role = state.currentUser ? state.currentUser.role : 'guest';
   const links = [
@@ -808,12 +832,8 @@ function renderNav() {
       <div class="flex items-center justify-between h-16">
         
         <!-- Brand Logo & Title -->
-        <div class="flex items-center gap-2 cursor-pointer shrink-0" onclick="navigate('dashboard')">
-          <div class="w-9 h-9 bg-gradient-to-tr from-fypilot-600 to-indigo-600 rounded-xl flex items-center justify-center shadow-md shadow-fypilot-500/20">
-            <i class="fas fa-brain text-white text-base"></i>
-          </div>
-          <span class="text-xl font-bold text-gray-900 tracking-tight">FYPilot</span>
-          <span class="text-[10px] bg-fypilot-100 text-fypilot-700 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">AI</span>
+        <div class="flex items-center cursor-pointer shrink-0" onclick="navigate('dashboard')">
+          <img src="/images/fypilotlogo.png" alt="FYPilot" class="h-12 w-auto object-contain" />
         </div>
 
         <!-- Desktop Navigation Links (primary + More dropdown, no overflow) -->
@@ -824,7 +844,7 @@ function renderNav() {
                     class="px-2.5 py-2 rounded-xl text-sm font-semibold transition-all duration-150 flex items-center gap-2 whitespace-nowrap shrink-0 ${state.currentView === l.id || state.currentView.startsWith(l.id) ? 'bg-fypilot-50 text-fypilot-700' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}">
               <i class="fas ${l.icon} text-sm"></i>
               <span class="hidden lg:inline">${l.label}</span>
-              ${navBadge(l.id)}
+              ${l.id === 'chats' ? chatNavBadge(false) : navBadge(l.id)}
             </button>
           `).join('')}
 
@@ -859,7 +879,7 @@ function renderNav() {
             ${currentRole}
           </span>
 
-          ${renderNotificationBell()}
+          ${renderNotificationBell('notif-bell-wrap', false)}
 
           <div class="flex items-center gap-2 bg-gray-50 border rounded-xl px-3 py-1.5">
             <div class="w-7 h-7 rounded-lg flex items-center justify-center text-white text-xs font-bold overflow-hidden ${state.currentUser.avatar ? '' : 'bg-fypilot-600'}">
@@ -876,7 +896,7 @@ function renderNav() {
 
         <!-- Mobile Hamburger Button -->
         <div class="flex items-center gap-2 md:hidden">
-          ${renderNotificationBellMobile()}
+          ${renderNotificationBell('notif-bell-wrap-m', true)}
           <button onclick="toggleMobileMenu()" class="p-2.5 rounded-xl text-gray-600 hover:bg-gray-100 focus:outline-none">
             <i class="fas ${state.mobileMenuOpen ? 'fa-times' : 'fa-bars'} text-lg"></i>
           </button>
@@ -909,7 +929,7 @@ function renderNav() {
                   class="w-full text-left px-3.5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-3 transition-colors ${state.currentView === l.id || state.currentView.startsWith(l.id) ? 'bg-fypilot-50 text-fypilot-700' : 'text-gray-700 hover:bg-gray-50'}">
             <i class="fas ${l.icon} w-5 text-center text-fypilot-500"></i>
             <span>${l.label}</span>
-            ${navBadge(l.id, true)}
+            ${l.id === 'chats' ? chatNavBadge(true) : navBadge(l.id, true)}
           </button>
         `).join('')}
       </div>
@@ -4125,7 +4145,10 @@ function renderChatList() {
     const time = lm ? fmtChatTime(lm.created_at) : '';
     return `
     <button onclick="openChat('${c.id}')" class="w-full text-left px-3 py-3 flex items-center gap-3 hover:bg-white transition-colors border-b border-gray-50 ${active ? 'bg-white shadow-sm' : ''}">
-      ${chatAvatar(c.peer)}
+      <div class="relative shrink-0">
+        ${chatAvatar(c.peer)}
+        ${c.peer.online ? '<span class="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-emerald-500 ring-2 ring-white"></span>' : ''}
+      </div>
       <div class="flex-1 min-w-0">
         <div class="flex items-center justify-between gap-2">
           <span class="font-semibold text-sm text-gray-900 truncate">${escapeHtml(c.peer.name)}</span>
@@ -4168,7 +4191,7 @@ function renderChatHeader() {
         <h3 class="font-bold text-gray-900 truncate">${escapeHtml(p.name)}</h3>
         <span class="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider capitalize ${p.role === 'coordinator' ? 'bg-purple-100 text-purple-700' : p.role === 'supervisor' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}">${p.role}</span>
       </div>
-      <p class="text-xs text-emerald-500 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span> Online · ${escapeHtml(p.department || '')}</p>
+      <p id="chat-header-status" class="text-xs flex items-center gap-1.5">${chatHeaderStatusHtml()}</p>
     </div>
     <button onclick="openPinnedChatMessages()" title="Pinned messages" class="w-9 h-9 rounded-xl text-gray-500 hover:bg-gray-100 flex items-center justify-center relative">
       <i class="fas fa-thumbtack"></i>
@@ -4265,7 +4288,7 @@ function chatMessageBody(m) {
   if (m.type === 'text') return `<p class="text-sm whitespace-pre-wrap break-words leading-relaxed">${escapeHtml(m.content)}</p>`;
   if (m.type === 'image') {
     return `<div>
-      <img src="${m.media_data}" alt="photo" onclick="openChatImage('${m.id}')" class="max-h-72 max-w-full rounded-xl cursor-zoom-in border border-black/5" />
+      <img src="${m.media_data}" alt="photo" onclick="openChatImage('${m.id}')" onload="chatScrollToBottom(false)" class="max-h-72 max-w-full rounded-xl cursor-zoom-in border border-black/5" />
       ${m.content ? `<p class="text-sm mt-1.5 whitespace-pre-wrap break-words">${escapeHtml(m.content)}</p>` : ''}
     </div>`;
   }
@@ -4417,9 +4440,9 @@ function renderChatComposerInner() {
       <div class="flex items-end gap-2">
         <button onclick="openChatImagePicker()" title="Send photo" class="w-11 h-11 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-fypilot-600 flex items-center justify-center shrink-0"><i class="fas fa-image text-lg"></i></button>
         <button onclick="toggleChatEmojiPicker()" title="Emoji" class="w-11 h-11 rounded-xl text-gray-500 hover:bg-gray-100 hover:text-fypilot-600 flex items-center justify-center shrink-0"><i class="fas fa-face-smile text-lg"></i></button>
-        <textarea id="chat-input" rows="1" placeholder="Type a message..." class="flex-1 resize-none border border-gray-200 bg-gray-50 focus:bg-white focus:border-fypilot-300 focus:ring-2 focus:ring-fypilot-500/20 rounded-2xl px-4 py-2.5 text-sm outline-none transition-all chat-scroll" oninput="autoGrowChatInput(this)" onkeydown="handleChatKeydown(event)"></textarea>
+        <textarea id="chat-input" rows="1" placeholder="Type a message..." class="flex-1 resize-none border border-gray-200 bg-gray-50 focus:bg-white focus:border-fypilot-300 focus:ring-2 focus:ring-fypilot-500/20 rounded-2xl px-4 py-2.5 text-sm outline-none transition-all chat-scroll" oninput="autoGrowChatInput(this); handleChatTyping()" onkeydown="handleChatKeydown(event)"></textarea>
         ${state.chatRecording ? '' : recorderBtn}
-        ${state.chatRecording ? '' : `<button onclick="sendChatMessage()" title="Send" class="w-11 h-11 rounded-xl bg-gradient-to-br from-fypilot-600 to-indigo-600 hover:scale-105 text-white shadow-lg shadow-fypilot-500/25 flex items-center justify-center transition-all shrink-0"><i class="fas fa-paper-plane text-sm"></i></button>`}
+        ${state.chatRecording ? '' : `<button onclick="sendChatMessage()" title="Send" ${state.chatSending ? 'disabled' : ''} class="w-11 h-11 rounded-xl bg-gradient-to-br from-fypilot-600 to-indigo-600 hover:scale-105 text-white shadow-lg shadow-fypilot-500/25 flex items-center justify-center transition-all shrink-0 ${state.chatSending ? 'opacity-60 cursor-not-allowed' : ''}"><i class="fas fa-paper-plane text-sm"></i></button>`}
       </div>
     </div>`;
 }
@@ -4435,7 +4458,7 @@ function autoGrowChatInput(el) {
 }
 
 function handleChatKeydown(e) {
-  if (e.key === 'Enter' && !e.shiftKey) {
+  if (e.key === 'Enter' && !e.shiftKey && !e.repeat) {
     e.preventDefault();
     if (state.chatRecording) { stopChatVoice(false); return; }
     sendChatMessage();
@@ -4502,7 +4525,14 @@ function updateNavChatBadge() {
 async function openChat(chatId) {
   const chat = state.chats.find(c => c.id === chatId);
   if (!chat) return;
+  stopTypingIndicator();
   state.activeChat = chat;
+  state.peerPresence = {
+    online: !!chat.peer.online,
+    last_seen: chat.peer.last_seen || null,
+    typing: false,
+    recording: false,
+  };
   state.chatMessages = [];
   state.chatReplyingTo = null;
   state.chatEditing = null;
@@ -4510,6 +4540,7 @@ async function openChat(chatId) {
   render();
   await loadChatMessages(chatId);
   chatScrollToBottom(true);
+  requestAnimationFrame(() => chatScrollToBottom(true));
 }
 
 async function loadChatMessages(chatId, opts) {
@@ -4519,6 +4550,10 @@ async function loadChatMessages(chatId, opts) {
   try {
     const query = after ? `?after=${after}&mark_read=1` : '?mark_read=1';
     const res = await api(`/chats/${chatId}/messages${query}`, { silentError: !!silent });
+    if (res.peer) {
+      state.peerPresence = res.peer;
+      if (state.activeChat && state.activeChat.id === chatId) updateChatHeaderStatus();
+    }
     let newCount = 0;
     if (after) {
       const seen = new Set(state.chatMessages.map(m => m.id));
@@ -4549,27 +4584,30 @@ function msgSyncKey(msgs) {
 }
 
 async function sendChatMessage() {
-  if (!state.activeChat) return;
+  if (!state.activeChat || state.chatSending) return;
   const input = document.getElementById('chat-input');
   const text = input ? input.value.trim() : '';
   const replyToId = state.chatReplyingTo ? state.chatReplyingTo.id : null;
+  const pendingMedia = state.chatPendingMedia;
+  if (!pendingMedia && !text) return;
+  state.chatSending = true;
+  const sendBtn = document.querySelector('#chat-composer button[title="Send"]');
+  if (sendBtn) { sendBtn.disabled = true; sendBtn.classList.add('opacity-60', 'cursor-not-allowed'); }
+  if (input) { input.value = ''; autoGrowChatInput(input); stopTypingIndicator(); }
   try {
-    if (state.chatPendingMedia) {
-      await api(`/chats/${state.activeChat.id}/messages`, {
-        method: 'POST',
-        body: JSON.stringify({ type: 'image', content: text || null, media_data: state.chatPendingMedia.data, media_mime: state.chatPendingMedia.mime, reply_to_id: replyToId })
-      });
-      state.chatPendingMedia = null;
-    } else if (text) {
-      await api(`/chats/${state.activeChat.id}/messages`, {
-        method: 'POST',
-        body: JSON.stringify({ type: 'text', content: text, reply_to_id: replyToId })
-      });
-    } else {
-      return;
-    }
-  } catch (e) { return; }
-  if (input) { input.value = ''; autoGrowChatInput(input); }
+    const body = pendingMedia
+      ? JSON.stringify({ type: 'image', content: text || null, media_data: pendingMedia.data, media_mime: pendingMedia.mime, reply_to_id: replyToId })
+      : JSON.stringify({ type: 'text', content: text, reply_to_id: replyToId });
+    await api(`/chats/${state.activeChat.id}/messages`, { method: 'POST', body });
+    state.chatPendingMedia = null;
+  } catch (e) {
+    if (input && text) { input.value = text; autoGrowChatInput(input); handleChatTyping(); }
+    if (pendingMedia) state.chatPendingMedia = pendingMedia;
+    return;
+  } finally {
+    state.chatSending = false;
+    if (sendBtn) { sendBtn.disabled = false; sendBtn.classList.remove('opacity-60', 'cursor-not-allowed'); }
+  }
   state.chatReplyingTo = null;
   state.chatEditing = null;
   hideChatEmojiPicker();
@@ -4710,6 +4748,8 @@ async function startChatVoice() {
     chatMediaRecorder.onstop = () => handleVoiceStop(stream);
     chatMediaRecorder.start();
     state.chatRecording = true;
+    stopTypingIndicator();
+    sendPresence();
     chatVoiceSeconds = 0;
     chatVoiceTimer = setInterval(() => {
       chatVoiceSeconds++;
@@ -4727,6 +4767,7 @@ function stopChatVoice(cancel) {
   if (chatMediaRecorder && chatMediaRecorder.state !== 'inactive') chatMediaRecorder.stop();
   if (chatVoiceTimer) { clearInterval(chatVoiceTimer); chatVoiceTimer = null; }
   state.chatRecording = false;
+  sendPresence();
   if (cancel) chatVoiceChunks = [];
   renderChatComposerOnly();
 }
@@ -4874,7 +4915,6 @@ let chatPollTick = 0;
 function startChatPolling() {
   stopChatPolling();
   chatPollTick = 0;
-  state.chatListTimer = setInterval(() => { loadChats(true); }, 5000);
   state.chatMsgTimer = setInterval(() => {
     if (state.activeChat && state.currentView === 'chats') {
       chatPollTick++;
@@ -4889,6 +4929,7 @@ function startChatPolling() {
 }
 
 function stopChatPolling() {
+  stopTypingIndicator();
   if (state.chatListTimer) { clearInterval(state.chatListTimer); state.chatListTimer = null; }
   if (state.chatMsgTimer) { clearInterval(state.chatMsgTimer); state.chatMsgTimer = null; }
   if (state.chatRecording) stopChatVoice(true);
@@ -4897,6 +4938,68 @@ function stopChatPolling() {
     chatVoiceAudio.currentTime = 0;
     state.chatVoicePlaying = null;
   }
+}
+
+// ===== Presence: online / last seen / typing / recording =====
+async function sendPresence() {
+  if (!state.currentUser) return;
+  try {
+    await api('/presence', {
+      method: 'POST',
+      body: JSON.stringify({
+        typing_chat_id: state.chatTyping && state.activeChat ? state.activeChat.id : null,
+        recording_chat_id: state.chatRecording && state.activeChat ? state.activeChat.id : null,
+      }),
+      silentError: true,
+    });
+  } catch (e) {}
+}
+
+function handleChatTyping() {
+  if (!state.activeChat) return;
+  const input = document.getElementById('chat-input');
+  const text = input ? input.value.trim() : '';
+  const shouldType = text.length > 0;
+  if (shouldType) {
+    if (!state.typingTimer) {
+      state.chatTyping = true;
+      sendPresence();
+      state.typingTimer = setInterval(() => sendPresence(), 3000);
+    }
+  } else if (state.typingTimer || state.chatTyping) {
+    stopTypingIndicator();
+  }
+}
+
+function stopTypingIndicator() {
+  if (state.typingTimer) {
+    clearInterval(state.typingTimer);
+    state.typingTimer = null;
+  }
+  if (state.chatTyping) {
+    state.chatTyping = false;
+    sendPresence();
+  }
+}
+
+function chatHeaderStatusHtml() {
+  const p = state.activeChat.peer;
+  const pr = state.peerPresence;
+  if (pr && pr.typing) {
+    return `<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse inline-block"></span><span class="text-fypilot-600 font-semibold">typing...</span>`;
+  }
+  if (pr && pr.recording) {
+    return `<span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse inline-block"></span><span class="text-red-500 font-semibold">recording voice message...</span>`;
+  }
+  if (pr && pr.online) {
+    return `<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span><span class="text-emerald-500">Online</span>${p.department ? `<span class="text-gray-300">·</span><span class="text-gray-500">${escapeHtml(p.department)}</span>` : ''}`;
+  }
+  return `<span class="w-1.5 h-1.5 rounded-full bg-gray-400 inline-block"></span><span class="text-gray-500">${pr && pr.last_seen ? 'Last seen ' + timeAgo(pr.last_seen) : 'Offline'}</span>`;
+}
+
+function updateChatHeaderStatus() {
+  const el = document.getElementById('chat-header-status');
+  if (el) el.innerHTML = chatHeaderStatusHtml();
 }
 
 function onChatScroll() {
@@ -4914,7 +5017,9 @@ function chatScrollToBottom(force) {
 }
 
 function closeChatOnMobile() {
+  stopTypingIndicator();
   state.activeChat = null;
+  state.peerPresence = null;
   render();
 }
 
@@ -4930,8 +5035,15 @@ function attachEventListeners() {
   }
 
   loadNotifications(true);
-  if (state.currentView === 'chats' && !state.notifGlobalTimer) {
-    state.notifGlobalTimer = setInterval(() => { loadNotifications(true); }, 15000);
+  if (!state.notifGlobalTimer) {
+    state.notifGlobalTimer = setInterval(() => { loadNotifications(true); }, 8000);
+  }
+  if (!state.chatListGlobalTimer) {
+    state.chatListGlobalTimer = setInterval(() => { loadChats(true); }, 6000);
+  }
+  if (!state.presenceTimer) {
+    state.presenceTimer = setInterval(() => sendPresence(), 25000);
+    sendPresence();
   }
 
   if (state.currentView === 'dashboard') {
@@ -4953,7 +5065,10 @@ function attachEventListeners() {
 }
 
 window.addEventListener('focus', () => {
-  if (state.currentUser) loadNotifications(true);
+  if (state.currentUser) {
+    loadNotifications(true);
+    sendPresence();
+  }
   if (state.currentView === 'dashboard' && state.currentUser && state.currentUser.role === 'coordinator') {
     loadPendingUsers();
   }
@@ -5062,3 +5177,10 @@ window.closeChatOnMobile = closeChatOnMobile;
 
 // Initial Application Render
 render();
+
+// Register Service Worker for PWA
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}

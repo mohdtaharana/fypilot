@@ -60,6 +60,38 @@ function serializeMessage(row: any): Record<string, unknown> {
   };
 }
 
+// ===== Presence =====
+
+const ONLINE_WINDOW_MS = 60 * 1000;   // user is online if active within the last 60s
+const TYPING_WINDOW_MS = 6 * 1000;    // typing/recording signal is live for 6s
+
+async function touchPresence(db: D1Database, userId: string): Promise<void> {
+  try {
+    await db.prepare(
+      `INSERT INTO presence (user_id, last_active_at) VALUES (?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET last_active_at = excluded.last_active_at`
+    ).bind(userId, new Date().toISOString()).run();
+  } catch (e) {
+    // presence must never break the underlying action
+  }
+}
+
+function serializePresence(row: any, chatId: string | null, nowIso: string): Record<string, unknown> {
+  if (!row) {
+    return { online: false, last_seen: null, typing: false, recording: false };
+  }
+  const now = new Date(nowIso).getTime();
+  const active = row.last_active_at ? new Date(row.last_active_at).getTime() : 0;
+  const typingAt = row.typing_at ? new Date(row.typing_at).getTime() : 0;
+  const recordingAt = row.recording_at ? new Date(row.recording_at).getTime() : 0;
+  return {
+    online: !!row.last_active_at && now - active < ONLINE_WINDOW_MS,
+    last_seen: row.last_active_at || null,
+    typing: !!chatId && row.typing_chat_id === chatId && typingAt > 0 && now - typingAt < TYPING_WINDOW_MS,
+    recording: !!chatId && row.recording_chat_id === chatId && recordingAt > 0 && now - recordingAt < TYPING_WINDOW_MS,
+  };
+}
+
 const MESSAGE_SELECT = `
   SELECT m.seq, m.id, m.chat_id, m.sender_id, m.type, m.content, m.media_data,
          m.media_mime, m.media_duration, m.reply_to_id, m.is_pinned, m.is_edited,
@@ -118,6 +150,16 @@ chatRoutes.get('/', async (c) => {
       : null,
   }));
 
+  const nowIso = new Date().toISOString();
+  for (const chat of chats) {
+    const pr = await c.env.DB.prepare('SELECT * FROM presence WHERE user_id = ?').bind(chat.peer.id).first();
+    const p = serializePresence(pr as any, null, nowIso);
+    (chat as any).peer.online = p.online;
+    (chat as any).peer.last_seen = p.last_seen;
+  }
+
+  await touchPresence(c.env.DB, userId);
+
   return c.json({ success: true, data: chats });
 });
 
@@ -174,6 +216,56 @@ chatRoutes.post('/', async (c) => {
   });
 });
 
+// POST /api/presence — heartbeat + typing / recording signals
+const presenceRoutes = new Hono<{ Bindings: Env }>();
+
+presenceRoutes.post('/', async (c) => {
+  const userId = c.req.header('X-User-Id') || '';
+  if (!userId) return c.json({ success: false, error: 'Not authenticated' }, 401);
+
+  const body = await c.req.json().catch(() => ({}));
+  const typingChatId = typeof body.typing_chat_id === 'string' && body.typing_chat_id ? body.typing_chat_id : null;
+  const recordingChatId = typeof body.recording_chat_id === 'string' && body.recording_chat_id ? body.recording_chat_id : null;
+  const now = new Date().toISOString();
+
+  if (typingChatId && !recordingChatId) {
+    await c.env.DB.prepare(
+      `INSERT INTO presence (user_id, last_active_at, typing_chat_id, typing_at, recording_chat_id, recording_at)
+       VALUES (?, ?, ?, ?, NULL, NULL)
+       ON CONFLICT(user_id) DO UPDATE SET
+         last_active_at = excluded.last_active_at,
+         typing_chat_id = excluded.typing_chat_id,
+         typing_at = excluded.typing_at,
+         recording_chat_id = NULL,
+         recording_at = NULL`
+    ).bind(userId, now, typingChatId, now).run();
+  } else if (recordingChatId) {
+    await c.env.DB.prepare(
+      `INSERT INTO presence (user_id, last_active_at, typing_chat_id, typing_at, recording_chat_id, recording_at)
+       VALUES (?, ?, NULL, NULL, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET
+         last_active_at = excluded.last_active_at,
+         typing_chat_id = NULL,
+         typing_at = NULL,
+         recording_chat_id = excluded.recording_chat_id,
+         recording_at = excluded.recording_at`
+    ).bind(userId, now, recordingChatId, now).run();
+  } else {
+    await c.env.DB.prepare(
+      `INSERT INTO presence (user_id, last_active_at, typing_chat_id, typing_at, recording_chat_id, recording_at)
+       VALUES (?, ?, NULL, NULL, NULL, NULL)
+       ON CONFLICT(user_id) DO UPDATE SET
+         last_active_at = excluded.last_active_at,
+         typing_chat_id = NULL,
+         typing_at = NULL,
+         recording_chat_id = NULL,
+         recording_at = NULL`
+    ).bind(userId, now).run();
+  }
+
+  return c.json({ success: true });
+});
+
 // GET /api/chats/:id/messages — fetch messages (+ mark peer messages read when opened)
 chatRoutes.get('/:id/messages', async (c) => {
   const userId = c.req.header('X-User-Id') || '';
@@ -214,7 +306,16 @@ chatRoutes.get('/:id/messages', async (c) => {
     ).bind(chatId, userId).run();
   }
 
-  return c.json({ success: true, data: rows.map(serializeMessage) });
+  await touchPresence(c.env.DB, userId);
+
+  const peerId = chat.user_a === userId ? chat.user_b : chat.user_a;
+  const peerPresence = await c.env.DB.prepare('SELECT * FROM presence WHERE user_id = ?').bind(peerId).first();
+
+  return c.json({
+    success: true,
+    data: rows.map(serializeMessage),
+    peer: serializePresence(peerPresence as any, chatId, new Date().toISOString()),
+  });
 });
 
 // POST /api/chats/:id/messages — send a message (text / image / voice / file)
@@ -285,6 +386,8 @@ chatRoutes.post('/:id/messages', async (c) => {
   const row = await c.env.DB.prepare(
     `${MESSAGE_SELECT} WHERE m.id = ?`
   ).bind(id).first();
+
+  await touchPresence(c.env.DB, userId);
 
   return c.json({ success: true, data: serializeMessage(row), message: 'Message sent' }, 201);
 });
@@ -394,4 +497,4 @@ chatRoutes.delete('/:chatId/messages/:messageId', async (c) => {
   return c.json({ success: true, message: 'Message deleted' });
 });
 
-export { chatRoutes };
+export { chatRoutes, presenceRoutes };

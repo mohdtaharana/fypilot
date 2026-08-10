@@ -6,7 +6,7 @@ import { projectRoutes } from './modules/projects/project.routes';
 import { userRoutes } from './modules/auth/user.routes';
 import { dashboardRoutes } from './modules/dashboard/dashboard.routes';
 import { groupRoutes } from './modules/groups/group.routes';
-import { chatRoutes } from './modules/chat/chat.routes';
+import { chatRoutes, presenceRoutes } from './modules/chat/chat.routes';
 import { notificationRoutes } from './modules/notifications/notification.routes';
 import type { Env } from './modules/ai/ai.types';
 
@@ -23,6 +23,7 @@ app.route('/api/users', userRoutes);
 app.route('/api/dashboard', dashboardRoutes);
 app.route('/api/groups', groupRoutes);
 app.route('/api/chats', chatRoutes);
+app.route('/api/presence', presenceRoutes);
 app.route('/api/notifications', notificationRoutes);
 
 // Health check
@@ -42,6 +43,14 @@ function getIndexHTML(): string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>FYPilot — AI Intelligence Layer for FYP Management</title>
+  <meta name="description" content="AI Intelligence Layer for FYP Management">
+  <meta name="theme-color" content="#0284c7">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="FYPilot">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <link rel="icon" type="image/png" href="/images/fypilotlogo.png">
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
