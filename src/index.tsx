@@ -8,6 +8,7 @@ import { dashboardRoutes } from './modules/dashboard/dashboard.routes';
 import { groupRoutes } from './modules/groups/group.routes';
 import { chatRoutes, presenceRoutes } from './modules/chat/chat.routes';
 import { notificationRoutes } from './modules/notifications/notification.routes';
+import { applicationRoutes } from './modules/applications/application.routes';
 import type { Env } from './modules/ai/ai.types';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -16,6 +17,7 @@ const app = new Hono<{ Bindings: Env }>();
 app.use('/api/*', cors());
 
 // API Routes
+app.route('/api/applications', applicationRoutes);
 app.route('/api/ai', aiRoutes);
 app.route('/api/proposals', proposalRoutes);
 app.route('/api/projects', projectRoutes);
@@ -80,6 +82,23 @@ function getIndexHTML(): string {
     .eq-bar { transform-origin: bottom; }
     .chat-voice-playing .eq-bar { animation: eqBounce 0.9s ease-in-out infinite; }
     @keyframes eqBounce { 0%, 100% { transform: scaleY(0.4); } 50% { transform: scaleY(1); } }
+
+    /* Hide native scrollbars globally for horizontal tab bars while keeping touch/drag scrolling active */
+    .no-scrollbar::-webkit-scrollbar,
+    .scrollbar-none::-webkit-scrollbar,
+    #apps-tab-bar::-webkit-scrollbar,
+    .overflow-x-auto::-webkit-scrollbar {
+      display: none !important;
+      width: 0 !important;
+      height: 0 !important;
+    }
+    .no-scrollbar,
+    .scrollbar-none,
+    #apps-tab-bar,
+    .overflow-x-auto {
+      -ms-overflow-style: none !important;
+      scrollbar-width: none !important;
+    }
   </style>
 </head>
 <body class="bg-gray-50 min-h-screen">

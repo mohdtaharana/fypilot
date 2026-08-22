@@ -15,10 +15,10 @@ userRoutes.post('/login', async (c) => {
     return c.json({ success: false, error: 'Email and password are required' }, 400);
   }
 
-  // Look up the user by email
+  // Look up the user by email or student ID
   const user = await c.env.DB.prepare(
-    'SELECT id, email, name, role, department, status, password, avatar FROM users WHERE email = ?'
-  ).bind(username).first() as Record<string, unknown> | null;
+    'SELECT id, email, name, role, department, status, password, avatar FROM users WHERE LOWER(email) = LOWER(?) OR LOWER(student_id_num) = LOWER(?)'
+  ).bind(username, username).first() as Record<string, unknown> | null;
 
   if (user) {
     // Enforce approval status
@@ -260,20 +260,24 @@ userRoutes.put('/:id/avatar', async (c) => {
 userRoutes.put('/:id', async (c) => {
   const id = c.req.param('id');
   const userId = c.req.header('X-User-Id') || 'demo-user';
-  if (userId !== id) {
+  const userRole = c.req.header('X-User-Role') || 'student';
+
+  if (userId !== id && userRole !== 'coordinator') {
     return c.json({ success: false, error: 'You can only update your own profile' }, 403);
   }
+
+  const currentUser = await c.env.DB.prepare('SELECT id, role, email FROM users WHERE id = ?').bind(id).first();
+  if (!currentUser) return c.json({ success: false, error: 'User not found' }, 404);
 
   const body = await c.req.json();
   const fields: string[] = [];
   const values: any[] = [];
 
-  if (body.name !== undefined) {
-    if (!body.name.trim()) return c.json({ success: false, error: 'Name cannot be empty' }, 400);
-    fields.push('name = ?');
-    values.push(body.name.trim());
-  }
-  if (body.email !== undefined) {
+  // Enforce: Students CANNOT change university email!
+  if (body.email !== undefined && body.email !== currentUser.email) {
+    if (currentUser.role === 'student' || userRole === 'student') {
+      return c.json({ success: false, error: 'University Email is read-only and cannot be changed by the student.' }, 403);
+    }
     const email = body.email.trim();
     if (!email || !/^\S+@\S+\.\S+$/.test(email)) return c.json({ success: false, error: 'Invalid email address' }, 400);
     const existing = await c.env.DB.prepare('SELECT id FROM users WHERE email = ? AND id != ?').bind(email, id).first();
@@ -281,6 +285,13 @@ userRoutes.put('/:id', async (c) => {
     fields.push('email = ?');
     values.push(email);
   }
+
+  if (body.name !== undefined) {
+    if (!body.name.trim()) return c.json({ success: false, error: 'Name cannot be empty' }, 400);
+    fields.push('name = ?');
+    values.push(body.name.trim());
+  }
+
   if (body.password !== undefined) {
     if (!body.password || body.password.length < 6) {
       return c.json({ success: false, error: 'Password must be at least 6 characters' }, 400);
@@ -297,9 +308,86 @@ userRoutes.put('/:id', async (c) => {
   await c.env.DB.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).bind(...values).run();
 
   const user = await c.env.DB.prepare(
-    'SELECT id, email, name, role, department, status, avatar FROM users WHERE id = ?'
+    'SELECT id, email, name, role, department, student_id_num, program, shift, status, avatar FROM users WHERE id = ?'
   ).bind(id).first();
   return c.json({ success: true, data: user, message: 'Profile updated!' });
+});
+
+// GET /api/users/:id/student-profile — Full Student Profile with Project, Group, Weekly Updates, Verified Meetings & Evaluations
+userRoutes.get('/:id/student-profile', async (c) => {
+  const id = c.req.param('id');
+  const user = await c.env.DB.prepare(
+    'SELECT id, email, name, role, department, student_id_num, program, shift, status, avatar, created_at FROM users WHERE id = ?'
+  ).bind(id).first();
+
+  if (!user) return c.json({ success: false, error: 'Student not found' }, 404);
+
+  // Group details
+  const groupMem = await c.env.DB.prepare(
+    `SELECT g.id as group_id, g.name as group_name, g.leader_id
+     FROM group_members gm JOIN groups g ON gm.group_id = g.id WHERE gm.user_id = ?`
+  ).bind(id).first();
+
+  let groupData = null;
+  if (groupMem) {
+    const members = await c.env.DB.prepare(
+      `SELECT u.id, u.name, u.email, u.student_id_num FROM group_members gm JOIN users u ON gm.user_id = u.id WHERE gm.group_id = ?`
+    ).bind(groupMem.group_id).all();
+    groupData = { ...groupMem, members: members.results };
+  }
+
+  // Project details
+  const projMem = await c.env.DB.prepare(
+    `SELECT p.*, s.name as supervisor_name, s.email as supervisor_email
+     FROM project_members pm JOIN projects p ON pm.project_id = p.id
+     LEFT JOIN users s ON p.supervisor_id = s.id WHERE pm.user_id = ? ORDER BY p.created_at DESC LIMIT 1`
+  ).bind(id).first();
+
+  let weeklyUpdates: any[] = [];
+  let verifiedMeetingsCount = 0;
+  let meetingsList: any[] = [];
+  let evaluations: any[] = [];
+
+  if (projMem) {
+    const updatesRes = await c.env.DB.prepare(
+      `SELECT w.*, u.name as student_name FROM weekly_updates w JOIN users u ON w.student_id = u.id WHERE w.project_id = ? ORDER BY w.week_number DESC`
+    ).bind(projMem.id).all();
+    weeklyUpdates = updatesRes.results;
+
+    const meetingsRes = await c.env.DB.prepare(
+      `SELECT m.*, s.name as supervisor_name FROM meetings m LEFT JOIN users s ON m.supervisor_id = s.id WHERE m.project_id = ? ORDER BY m.created_at DESC`
+    ).bind(projMem.id).all();
+    meetingsList = meetingsRes.results;
+
+    const verifiedRes = await c.env.DB.prepare(
+      `SELECT COUNT(*) as count FROM meetings WHERE project_id = ? AND verification_status = 'verified'`
+    ).bind(projMem.id).first();
+    verifiedMeetingsCount = (verifiedRes?.count as number) || 0;
+
+    const evalsRes = await c.env.DB.prepare(
+      `SELECT e.*, s.name as supervisor_name FROM evaluations e JOIN users s ON e.supervisor_id = s.id WHERE e.student_id = ? OR e.project_id = ? ORDER BY e.created_at DESC`
+    ).bind(id, projMem.id).all();
+    evaluations = evalsRes.results;
+  } else {
+    // If no project bound yet, check meetings directly by student_id
+    const verifiedRes = await c.env.DB.prepare(
+      `SELECT COUNT(*) as count FROM meetings WHERE student_id = ? AND verification_status = 'verified'`
+    ).bind(id).first();
+    verifiedMeetingsCount = (verifiedRes?.count as number) || 0;
+  }
+
+  return c.json({
+    success: true,
+    data: {
+      student: user,
+      group: groupData,
+      project: projMem || null,
+      weekly_updates: weeklyUpdates,
+      verified_meetings_count: verifiedMeetingsCount,
+      meetings: meetingsList,
+      evaluations: evaluations
+    }
+  });
 });
 
 // POST /api/users (coordinator adds directly — status = active immediately)
@@ -330,7 +418,7 @@ userRoutes.delete('/:id', async (c) => {
   }
   const id = c.req.param('id');
   const target = await c.env.DB.prepare(
-    'SELECT id, name, role, status FROM users WHERE id = ?'
+    'SELECT id, name, role, status, email, student_id_num FROM users WHERE id = ?'
   ).bind(id).first() as Record<string, any> | null;
   if (!target) return c.json({ success: false, error: 'User not found' }, 404);
   if (target.role === 'coordinator') {
@@ -338,12 +426,12 @@ userRoutes.delete('/:id', async (c) => {
   }
 
   try {
-    // Groups led by this user are deleted entirely (with their proposals/projects).
+    // 1. Groups led by this user are deleted entirely (with their proposals/projects).
     const ledGroups = await c.env.DB.prepare('SELECT id FROM groups WHERE leader_id = ?').bind(id).all();
     const ledGroupIds = ledGroups.results.map((r: any) => r.id);
     if (ledGroupIds.length) await deleteGroupsCascade(c.env.DB, ledGroupIds);
 
-    // All proposals referencing this user (submitted OR supervised) + their projects.
+    // 2. All proposals referencing this user (submitted OR supervised) + their projects.
     const proposalRows = await c.env.DB.prepare(
       'SELECT id FROM proposals WHERE submitted_by = ? OR supervisor_id = ?'
     ).bind(id, id).all();
@@ -357,30 +445,56 @@ userRoutes.delete('/:id', async (c) => {
       projectIds = projectRows.results.map((r: any) => r.id);
     }
 
-    // Projects supervised by this user are deleted too (they become orphaned otherwise).
+    // Projects supervised by this user are deleted too.
     const supRows = await c.env.DB.prepare('SELECT id FROM projects WHERE supervisor_id = ?').bind(id).all();
     projectIds = projectIds.concat(supRows.results.map((r: any) => r.id));
 
     if (projectIds.length) await deleteProjectsCascade(c.env.DB, projectIds);
     if (proposalIds.length) {
+      await c.env.DB.prepare('DELETE FROM feedback WHERE proposal_id IN (SELECT value FROM json_each(?))')
+        .bind(JSON.stringify(proposalIds)).run();
       await c.env.DB.prepare('DELETE FROM proposals WHERE id IN (SELECT value FROM json_each(?))')
         .bind(JSON.stringify(proposalIds)).run();
     }
 
-    // Clear every remaining reference to this user so the final DELETE never hits an FK constraint.
-    await c.env.DB.batch([
-      c.env.DB.prepare('DELETE FROM group_members WHERE user_id = ?').bind(id),
-      c.env.DB.prepare('DELETE FROM project_members WHERE user_id = ?').bind(id),
-      c.env.DB.prepare('DELETE FROM project_media WHERE uploaded_by = ?').bind(id),
-      c.env.DB.prepare('DELETE FROM project_feedback WHERE user_id = ?').bind(id),
-      c.env.DB.prepare('DELETE FROM feedback WHERE from_user_id = ? OR to_user_id = ?').bind(id, id),
-      c.env.DB.prepare('DELETE FROM messages WHERE chat_id IN (SELECT id FROM chats WHERE user_a = ? OR user_b = ?)').bind(id, id),
-      c.env.DB.prepare('DELETE FROM chats WHERE user_a = ? OR user_b = ?').bind(id, id),
-      c.env.DB.prepare('DELETE FROM ai_audit_log WHERE user_id = ?').bind(id),
-      c.env.DB.prepare('DELETE FROM ai_rate_limits WHERE user_id = ?').bind(id),
-      c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id),
-    ]);
+    // 3. Clear EVERY remaining reference to this user so the final DELETE never hits an FK constraint.
+    const email = target.email || '';
+    const studentIdNum = target.student_id_num || '';
+
+    const safeDelete = async (sql: string, ...args: any[]) => {
+      try {
+        await c.env.DB.prepare(sql).bind(...args).run();
+      } catch (e) {
+        // Ignored if table doesn't exist or already cleaned up
+      }
+    };
+
+    await safeDelete('DELETE FROM weekly_updates WHERE student_id = ?', id);
+    await safeDelete('DELETE FROM meetings WHERE student_id = ? OR supervisor_id = ?', id, id);
+    await safeDelete('DELETE FROM evaluations WHERE student_id = ? OR supervisor_id = ?', id, id);
+    await safeDelete('DELETE FROM notifications WHERE user_id = ?', id);
+    await safeDelete('DELETE FROM presence WHERE user_id = ?', id);
+    await safeDelete('DELETE FROM user_presence WHERE user_id = ?', id);
+    await safeDelete('DELETE FROM tasks WHERE assigned_to = ?', id);
+    await safeDelete('DELETE FROM activity_log WHERE user_id = ?', id);
+    await safeDelete('DELETE FROM group_members WHERE user_id = ?', id);
+    await safeDelete('DELETE FROM project_members WHERE user_id = ?', id);
+    await safeDelete('DELETE FROM project_media WHERE uploaded_by = ?', id);
+    await safeDelete('DELETE FROM project_feedback WHERE user_id = ?', id);
+    await safeDelete('DELETE FROM feedback WHERE from_user_id = ? OR to_user_id = ?', id, id);
+    await safeDelete('DELETE FROM messages WHERE sender_id = ?', id);
+    await safeDelete('DELETE FROM messages WHERE chat_id IN (SELECT id FROM chats WHERE user_a = ? OR user_b = ?)', id, id);
+    await safeDelete('DELETE FROM chats WHERE user_a = ? OR user_b = ?', id, id);
+    await safeDelete('DELETE FROM ai_audit_log WHERE user_id = ?', id);
+    await safeDelete('DELETE FROM ai_rate_limits WHERE user_id = ?', id);
+    if (email || studentIdNum) {
+      await safeDelete('DELETE FROM student_applications WHERE email = ? OR student_id_num = ?', email, studentIdNum);
+    }
+
+    // Final delete user
+    await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id).run();
   } catch (e) {
+    console.error('Delete user error:', e);
     return c.json({ success: false, error: 'Failed to delete user: ' + ((e as Error).message || 'unknown error') }, 500);
   }
 

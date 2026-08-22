@@ -1,16 +1,20 @@
 // Shared DB cascade helpers for deleting projects/groups (and everything referencing them).
 
-// Delete projects and all child records (feedback, media, links, meetings, members).
+// Delete projects and all child records (weekly_updates, evaluations, tasks, feedback, media, links, meetings, members).
 // projectIds must be unique; empty list is a no-op.
 export async function deleteProjectsCascade(db: D1Database, projectIds: string[]) {
   if (!projectIds.length) return;
   const ids = JSON.stringify([...new Set(projectIds)]);
   await db.batch([
+    db.prepare(`DELETE FROM weekly_updates WHERE project_id IN (SELECT value FROM json_each(?))`).bind(ids),
+    db.prepare(`DELETE FROM evaluations WHERE project_id IN (SELECT value FROM json_each(?))`).bind(ids),
+    db.prepare(`DELETE FROM tasks WHERE project_id IN (SELECT value FROM json_each(?))`).bind(ids),
     db.prepare(`DELETE FROM project_feedback WHERE project_id IN (SELECT value FROM json_each(?))`).bind(ids),
     db.prepare(`DELETE FROM project_media WHERE project_id IN (SELECT value FROM json_each(?))`).bind(ids),
     db.prepare(`DELETE FROM project_links WHERE project_id IN (SELECT value FROM json_each(?))`).bind(ids),
     db.prepare(`DELETE FROM meetings WHERE project_id IN (SELECT value FROM json_each(?))`).bind(ids),
     db.prepare(`DELETE FROM project_members WHERE project_id IN (SELECT value FROM json_each(?))`).bind(ids),
+    db.prepare(`DELETE FROM feedback WHERE project_id IN (SELECT value FROM json_each(?))`).bind(ids),
     db.prepare(`DELETE FROM projects WHERE id IN (SELECT value FROM json_each(?))`).bind(ids),
   ]);
 }
@@ -31,19 +35,16 @@ export async function deleteGroupsCascade(db: D1Database, groupIds: string[]) {
   ).bind(groupsJson).all();
   const projectIds = projectRows.results.map((r: any) => r.id);
 
-  const stmts: D1PreparedStatement[] = [];
   if (projectIds.length) {
-    stmts.push(
-      db.prepare(`DELETE FROM project_feedback WHERE project_id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(projectIds)),
-      db.prepare(`DELETE FROM project_media WHERE project_id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(projectIds)),
-      db.prepare(`DELETE FROM project_links WHERE project_id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(projectIds)),
-      db.prepare(`DELETE FROM meetings WHERE project_id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(projectIds)),
-      db.prepare(`DELETE FROM project_members WHERE project_id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(projectIds)),
-      db.prepare(`DELETE FROM projects WHERE id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(projectIds)),
-    );
+    await deleteProjectsCascade(db, projectIds);
   }
+
+  const stmts: D1PreparedStatement[] = [];
   if (proposalIds.length) {
-    stmts.push(db.prepare(`DELETE FROM proposals WHERE id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(proposalIds)));
+    stmts.push(
+      db.prepare(`DELETE FROM feedback WHERE proposal_id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(proposalIds)),
+      db.prepare(`DELETE FROM proposals WHERE id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(proposalIds))
+    );
   }
   stmts.push(
     db.prepare(`DELETE FROM group_members WHERE group_id IN (SELECT value FROM json_each(?))`).bind(groupsJson),

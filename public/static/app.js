@@ -12,6 +12,67 @@ try {
   initialUser = null;
 }
 
+const DEPARTMENT_MATRIX = {
+  'BS': {
+    'Morning': [
+      'Business Administration',
+      'Accounting Banking & Finance',
+      'Computer Science',
+      'Software Engineering',
+      'Artificial Intelligence & Mathematical Sciences',
+      'Cyber Security',
+      'Data Science',
+      'Media & Communication Studies',
+      'English',
+      'Environmental Sciences'
+    ],
+    'Evening': [
+      'Computer Science',
+      'Software Engineering',
+      'Artificial Intelligence & Mathematical Sciences',
+      'Business Administration',
+      'Accounting Banking & Finance',
+      'Media & Communication Studies'
+    ]
+  },
+  'MS': {
+    'Morning': [
+      'Computer Science',
+      'Software Engineering',
+      'Business Administration',
+      'Media & Communication Studies',
+      'English'
+    ],
+    'Evening': [
+      'Computer Science',
+      'Software Engineering',
+      'Artificial Intelligence & Mathematical Sciences',
+      'Business Administration'
+    ]
+  }
+};
+
+const LIFECYCLE_STAGES = [
+  'Requirements Gathering',
+  'Requirements Analysis',
+  'Feasibility Analysis',
+  'Planning',
+  'System Design',
+  'Architecture Design',
+  'UI/UX Design',
+  'Database Design',
+  'Development',
+  'Integration',
+  'Testing',
+  'Debugging',
+  'Deployment',
+  'Documentation',
+  'Maintenance',
+  'Research',
+  'Presentation Preparation',
+  'Other'
+];
+
 const state = {
   isAuthenticated: !!initialUser,
   currentUser: initialUser,
@@ -43,6 +104,35 @@ const state = {
   peopleView: 'grid',
   peopleTab: 'all',
   peopleSearch: '',
+  // Public Applications state
+  applications: [],
+  selectedApplication: null,
+  applicationsTab: 'all',
+  applicationsSearch: '',
+  applyStep: 1,
+  applyForm: {
+    email: '',
+    student_id_num: '',
+    student_name: '',
+    program: 'BS',
+    shift: 'Morning',
+    department: 'Computer Science',
+    group_name: '',
+    project_title: '',
+    members: [{ name: '', student_id_num: '' }],
+    pref_1: '',
+    pref_2: '',
+    pref_3: '',
+    priority: 'Normal',
+    internship_certificate_pdf: null,
+    pdf_name: '',
+    pdf_size: ''
+  },
+  applySubmitted: false,
+  applySubmittedData: null,
+  supervisorsList: [],
+  projectDetailTab: 'overview',
+  studentProfileData: null,
   aiLoading: {},
   aiResults: {},
   // Chat state
@@ -160,6 +250,8 @@ function navigate(view, data = null) {
     if (view === 'project-detail') state.selectedProject = data;
   }
   if (view !== 'chats') stopChatPolling();
+  if (view === 'applications') startApplicationsPolling();
+  else stopApplicationsPolling();
   render();
   markViewNotificationsRead(view);
 }
@@ -191,6 +283,12 @@ function toggleNavMore() {
 function render() {
   const app = document.getElementById('app');
   if (!app) return;
+
+  if (window.location.pathname === '/apply' || state.currentView === 'apply') {
+    app.innerHTML = renderPublicApplicationPage();
+    attachApplicationFormListeners();
+    return;
+  }
 
   if (!state.isAuthenticated || !state.currentUser) {
     app.innerHTML = renderLoginScreen();
@@ -227,6 +325,15 @@ function renderLoginScreen() {
           <img src="/images/fypilotlogo.png" alt="FYPilot" class="w-full h-full object-contain" />
         </div>
         <p class="text-xs text-gray-500 mt-1 font-medium">AI Intelligence Layer for FYP Management</p>
+      </div>
+
+      <!-- Public FYP Application Banner -->
+      <div class="mb-5 bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-xl p-3.5 shadow-sm text-center">
+        <p class="text-xs font-bold text-emerald-900 mb-1"><i class="fas fa-graduation-cap text-emerald-600 mr-1"></i> New FYP Student?</p>
+        <p class="text-[11px] text-emerald-700 mb-2.5">No login required initially! Submit your official FYP application with your internship certificate.</p>
+        <button onclick="navigateToApply()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-3 rounded-lg text-xs transition-all shadow-sm flex items-center justify-center gap-2">
+          <i class="fas fa-file-signature"></i> Public Student Application (/apply)
+        </button>
       </div>
 
       <!-- Login / Register Tab Toggle -->
@@ -689,7 +796,7 @@ function renderNotificationBell(wrapId, mobile) {
 function renderNotificationPanel() {
   const items = state.notifications;
   return `
-  <div class="absolute right-0 top-full mt-2 w-[calc(100vw-2rem)] max-w-[360px] bg-white border border-gray-100 rounded-2xl shadow-xl shadow-gray-200/60 fade-in z-50 overflow-hidden">
+  <div class="fixed sm:absolute right-2 sm:right-0 top-16 sm:top-full mt-0 sm:mt-2 left-2 sm:left-auto w-auto sm:w-[360px] max-w-[calc(100vw-1rem)] bg-white border border-gray-100 rounded-2xl shadow-2xl shadow-gray-900/20 fade-in z-[1000] overflow-hidden">
     <div class="flex items-center justify-between px-4 py-3 border-b border-gray-100">
       <h3 class="text-sm font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-bell text-fypilot-600"></i> Notifications</h3>
       ${state.notifTotal ? `<button onclick="markAllNotificationsRead()" class="text-[11px] font-semibold text-fypilot-600 hover:text-fypilot-700 flex items-center gap-1"><i class="fas fa-check-double text-[10px]"></i> Mark all read</button>` : ''}
@@ -810,7 +917,10 @@ function renderNav() {
     { id: 'projects', label: 'Projects', icon: 'fa-project-diagram' },
     { id: 'supervisors', label: 'Supervisors', icon: 'fa-user-tie' },
     { id: 'chats', label: 'Chats', icon: 'fa-comments' },
-    ...(role === 'coordinator' ? [{ id: 'people', label: 'People', icon: 'fa-user-friends' }] : []),
+    ...(role === 'coordinator' ? [
+      { id: 'applications', label: 'Applications', icon: 'fa-file-signature' },
+      { id: 'people', label: 'People', icon: 'fa-user-friends' }
+    ] : []),
     ...(role === 'student' || role === 'coordinator' || role === 'supervisor' ? [{ id: 'groups', label: role === 'student' ? 'My Group' : 'Groups', icon: 'fa-users' }] : []),
     { id: 'profile', label: 'Profile', icon: 'fa-id-badge' },
   ];
@@ -951,6 +1061,8 @@ function renderCurrentView() {
     case 'groups': return renderGroups();
     case 'group-profile': return renderGroupProfile();
     case 'profile': return renderProfile();
+    case 'applications': return renderApplicationsList();
+    case 'apply': return renderPublicApplicationPage();
     default: return renderDashboard();
   }
 }
@@ -1980,7 +2092,106 @@ function renderProjectDetail() {
       </div>
     </div>
 
-    <!-- AI Risk & Insights Grid -->
+    <!-- Meeting Verification & Meeting Logs -->
+    <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm space-y-4">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <div class="flex items-center gap-2">
+            <h3 class="font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-calendar-check text-emerald-600"></i> Meeting Verification &amp; Logs</h3>
+            <span class="bg-emerald-100 text-emerald-800 text-xs font-bold px-2.5 py-0.5 rounded-full border border-emerald-200">${p.verifiedMeetingsCount || 0} Verified</span>
+          </div>
+          <p class="text-[11px] text-gray-500 mt-0.5"><i class="fas fa-info-circle text-blue-500 mr-1"></i>Meetings start as 'Pending Verification'. Verified count increments only after supervisor approval.</p>
+        </div>
+        ${isStudentMember || (state.currentUser && state.currentUser.role === 'student') ? `
+          <button onclick="showRecordMeetingModal('${p.id}')" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3.5 py-2 rounded-xl text-xs shadow-sm transition-all flex items-center gap-1.5 shrink-0 self-start sm:self-auto">
+            <i class="fas fa-plus-circle"></i> Add Meeting Record
+          </button>
+        ` : ''}
+      </div>
+
+      <div class="space-y-3">
+        ${(p.meetings || []).length ? p.meetings.map(m => {
+          const statusColors = {
+            verified: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+            pending: 'bg-amber-100 text-amber-800 border-amber-200',
+            revision_requested: 'bg-purple-100 text-purple-800 border-purple-200',
+            rejected: 'bg-rose-100 text-rose-800 border-rose-200'
+          };
+          const statusLabels = {
+            verified: '<i class="fas fa-check-circle mr-1"></i>Verified',
+            pending: '<i class="fas fa-clock mr-1"></i>Pending Verification',
+            revision_requested: '<i class="fas fa-edit mr-1"></i>Changes Requested',
+            rejected: '<i class="fas fa-times-circle mr-1"></i>Rejected'
+          };
+          const st = m.verification_status || 'pending';
+          return `
+            <div class="p-4 rounded-2xl border border-gray-200 bg-gray-50/50 space-y-2">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                  <span class="font-bold text-gray-900 text-sm">${escapeHtml(m.title || 'Supervisor Meeting')}</span>
+                  <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase ${statusColors[st] || 'bg-gray-100'}">${statusLabels[st] || st}</span>
+                </div>
+                <span class="text-xs font-mono text-gray-500"><i class="far fa-calendar-alt mr-1"></i>${m.meeting_date || m.scheduled_at || 'N/A'}</span>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs pt-1">
+                ${m.discussion ? `<div><span class="font-bold text-gray-700 block">Discussion:</span><span class="text-gray-600">${escapeHtml(m.discussion)}</span></div>` : ''}
+                ${m.work_discussed ? `<div><span class="font-bold text-gray-700 block">Work Discussed:</span><span class="text-gray-600">${escapeHtml(m.work_discussed)}</span></div>` : ''}
+                ${m.action_items ? `<div><span class="font-bold text-gray-700 block">Action Items:</span><span class="text-gray-600">${escapeHtml(m.action_items)}</span></div>` : ''}
+                ${m.next_meeting_plan ? `<div><span class="font-bold text-gray-700 block">Next Meeting Plan:</span><span class="text-gray-600">${escapeHtml(m.next_meeting_plan)}</span></div>` : ''}
+              </div>
+
+              ${m.supervisor_feedback ? `
+                <div class="bg-indigo-50 border border-indigo-100 rounded-xl p-2.5 text-xs text-indigo-900 mt-2">
+                  <span class="font-bold block text-indigo-800"><i class="fas fa-comment-dots mr-1"></i>Supervisor Feedback:</span>
+                  <span>${escapeHtml(m.supervisor_feedback)}</span>
+                </div>
+              ` : ''}
+
+              ${['supervisor', 'coordinator'].includes(state.currentUser.role) ? `
+                <div class="flex justify-end pt-2">
+                  <button onclick="showVerifyMeetingModal('${p.id}', '${m.id}')" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs transition-all flex items-center gap-1">
+                    <i class="fas fa-user-check"></i> Review &amp; Verify Meeting
+                  </button>
+                </div>
+              ` : ''}
+            </div>
+          `;
+        }).join('') : '<p class="text-xs text-gray-400">No meeting records added yet. Add a meeting record after meeting your supervisor.</p>'}
+      </div>
+    </div>
+
+    <!-- Student Evaluations & Performance -->
+    <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm space-y-4">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h3 class="font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-star text-amber-500"></i> Student Evaluations &amp; Grading</h3>
+          <p class="text-[11px] text-gray-500 mt-0.5">Formal supervisor feedback, performance evaluation &amp; scoring.</p>
+        </div>
+        ${['supervisor', 'coordinator'].includes(state.currentUser.role) ? `
+          <button onclick="showStudentEvaluationModal('${p.id}')" class="bg-amber-600 hover:bg-amber-700 text-white font-bold px-3.5 py-2 rounded-xl text-xs shadow-sm transition-all flex items-center gap-1.5 shrink-0 self-start sm:self-auto">
+            <i class="fas fa-award"></i> Evaluate Student
+          </button>
+        ` : ''}
+      </div>
+
+      <div class="space-y-3">
+        ${(p.evaluations || []).length ? p.evaluations.map(ev => `
+          <div class="p-4 rounded-2xl border border-amber-200/70 bg-amber-50/30 space-y-2">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class="font-bold text-gray-900 text-sm"><i class="fas fa-user-graduate text-indigo-600 mr-1.5"></i>${escapeHtml(ev.student_name || 'Student')}</span>
+                ${ev.grade ? `<span class="bg-emerald-100 text-emerald-800 text-xs font-bold px-2.5 py-0.5 rounded-full border border-emerald-200">Grade: ${escapeHtml(ev.grade)}</span>` : ''}
+                ${ev.score !== null && ev.score !== undefined ? `<span class="bg-blue-100 text-blue-800 text-xs font-bold px-2.5 py-0.5 rounded-full border border-blue-200">Score: ${ev.score}/100</span>` : ''}
+              </div>
+              <span class="text-[10px] text-gray-400 font-mono">${new Date(ev.created_at || ev.evaluation_date).toLocaleDateString()}</span>
+            </div>
+            <p class="text-xs text-gray-700 leading-relaxed">${escapeHtml(ev.comments)}</p>
+            <p class="text-[10px] text-gray-400 italic">Evaluated by: ${escapeHtml(ev.supervisor_name || 'Supervisor')}</p>
+          </div>
+        `).join('') : '<p class="text-xs text-gray-400">No evaluations submitted yet.</p>'}
+      </div>
+    </div>
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
         <div class="flex items-center justify-between mb-4">
@@ -3633,24 +3844,40 @@ function renderProposalGroupBanner() {
 async function loadProfile() {
   try {
     const me = state.currentUser;
-    const [userRes, groupsRes, proposalsRes, projectsRes] = await Promise.all([
+    const [userRes, groupsRes, proposalsRes, projectsRes, studentProfileRes] = await Promise.all([
       api(`/users/${me.id}`).catch(() => null),
       api('/groups').catch(() => null),
       api('/proposals').catch(() => null),
       api('/projects').catch(() => null),
+      me.role === 'student' ? api(`/users/${me.id}/student-profile`).catch(() => null) : Promise.resolve(null)
     ]);
     const user = (userRes && userRes.data) || me;
     const groups = (groupsRes && groupsRes.data) || [];
     const proposals = (proposalsRes && proposalsRes.data) || [];
     const projects = (projectsRes && projectsRes.data) || [];
+    const sp = studentProfileRes && studentProfileRes.data ? studentProfileRes.data : null;
+
     const container = document.getElementById('profile-content');
     if (!container) return;
 
     let sections = '';
 
     if (me.role === 'student') {
-      const g = groups[0] || null;
+      const g = (sp && sp.group) || groups[0] || null;
+      const verifiedMeetingsCount = sp && sp.meetingStats ? sp.meetingStats.verifiedMeetings : 0;
+      const pendingMeetingsCount = sp && sp.meetingStats ? sp.meetingStats.pendingMeetings : 0;
+
       sections += `
+        <!-- Verified Meetings Metric Card -->
+        <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+          <h3 class="font-bold text-gray-900 text-sm mb-3"><i class="fas fa-handshake text-fypilot-500 mr-2"></i>Verified Supervisor Meetings</h3>
+          <div class="p-4 rounded-xl bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 text-center">
+            <div class="text-3xl font-extrabold text-emerald-700">${verifiedMeetingsCount}</div>
+            <div class="text-xs font-bold text-emerald-800 mt-1">Verified Meetings Count</div>
+            <p class="text-[10px] text-emerald-600 mt-0.5">${pendingMeetingsCount} pending verification</p>
+          </div>
+        </div>
+
         <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
           <h3 class="font-bold text-gray-900 text-sm mb-3"><i class="fas fa-users text-fypilot-500 mr-2"></i>My Group</h3>
           ${g ? `
@@ -3720,10 +3947,29 @@ async function loadProfile() {
     const expertise = user.expertise ? (() => { try { return JSON.parse(user.expertise); } catch (e) { return []; } })() : [];
     sections = `
       <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
-        <h3 class="font-bold text-gray-900 text-sm mb-3"><i class="fas fa-id-card text-fypilot-500 mr-2"></i>Personal Information</h3>
+        <h3 class="font-bold text-gray-900 text-sm mb-3 flex items-center justify-between">
+          <span><i class="fas fa-id-card text-fypilot-500 mr-2"></i>Personal Information</span>
+          ${me.role === 'student' ? '<span class="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">Read-Only Security</span>' : ''}
+        </h3>
         <dl class="space-y-2.5">
           <div class="flex justify-between gap-3"><dt class="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Full Name</dt><dd class="text-xs font-semibold text-gray-800 text-right">${user.name || me.name}</dd></div>
-          <div class="flex justify-between gap-3"><dt class="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Email</dt><dd class="text-xs text-gray-800 text-right break-all">${user.email || me.email}</dd></div>
+          <div class="flex flex-col gap-1 pt-1">
+            <dt class="text-[11px] font-semibold text-gray-500 uppercase tracking-wider flex items-center justify-between">
+              <span>University Email</span>
+              ${me.role === 'student' ? '<span class="text-[10px] text-amber-600 font-bold"><i class="fas fa-lock mr-1"></i>Read-Only</span>' : ''}
+            </dt>
+            <dd>
+              <div class="relative">
+                <input type="email" value="${user.email || me.email}" ${me.role === 'student' ? 'readonly' : ''} class="w-full ${me.role === 'student' ? 'bg-gray-100 border border-gray-300 text-gray-700 font-mono text-xs cursor-not-allowed select-none' : 'border border-gray-200 text-xs'} rounded-xl px-3 py-2 pr-8" />
+                ${me.role === 'student' ? '<i class="fas fa-lock absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs"></i>' : ''}
+              </div>
+              ${me.role === 'student' ? `
+                <p class="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-1.5 mt-1 flex items-center gap-1 font-medium">
+                  <i class="fas fa-exclamation-circle text-amber-500 shrink-0"></i> University Email is read-only and cannot be changed by the student.
+                </p>
+              ` : ''}
+            </dd>
+          </div>
           <div class="flex justify-between gap-3"><dt class="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Role</dt><dd class="text-xs font-semibold text-gray-800 capitalize text-right">${me.role}</dd></div>
           <div class="flex justify-between gap-3"><dt class="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Department</dt><dd class="text-xs text-gray-800 text-right">${user.department || me.department || 'Computer Science'}</dd></div>
           ${expertise.length ? `<div class="flex justify-between gap-3"><dt class="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Expertise</dt><dd class="text-xs text-gray-800 text-right flex flex-wrap gap-1 justify-end">${expertise.map(e => `<span class="bg-fypilot-50 text-fypilot-700 px-2 py-0.5 rounded-lg text-[10px] font-medium">${e}</span>`).join('')}</dd></div>` : ''}
@@ -5174,6 +5420,1655 @@ window.toggleVoicePlayer = toggleVoicePlayer;
 window.openChatImage = openChatImage;
 window.openPinnedChatMessages = openPinnedChatMessages;
 window.closeChatOnMobile = closeChatOnMobile;
+
+// ===== Public Student Application & Governance Workflows =====
+
+function navigateToApply() {
+  window.history.pushState(null, '', '/apply');
+  state.currentView = 'apply';
+  render();
+}
+
+window.addEventListener('popstate', () => {
+  if (window.location.pathname === '/apply') {
+    state.currentView = 'apply';
+  } else {
+    state.currentView = 'dashboard';
+  }
+  render();
+});
+
+async function loadSupervisorsForApply() {
+  if (!state.supervisorsList.length) {
+    try {
+      const res = await api('/users?role=supervisor');
+      state.supervisorsList = res.data || [];
+    } catch (e) {
+      state.supervisorsList = [];
+    }
+  }
+}
+
+function updateApplyDepartmentOptions() {
+  const prog = state.applyForm.program || 'BS';
+  const shift = state.applyForm.shift || 'Morning';
+  const depts = (DEPARTMENT_MATRIX[prog] && DEPARTMENT_MATRIX[prog][shift]) || [];
+  
+  if (!depts.includes(state.applyForm.department)) {
+    state.applyForm.department = depts[0] || '';
+  }
+  
+  const deptSelect = document.getElementById('apply-department');
+  if (deptSelect) {
+    deptSelect.innerHTML = depts.map(d => `<option value="${d}" ${state.applyForm.department === d ? 'selected' : ''}>${d}</option>`).join('');
+  }
+}
+
+function setApplyStep(step) {
+  if (step > state.applyStep) {
+    if (state.applyStep === 1) {
+      const email = (state.applyForm.email || '').trim();
+      if (!email || !email.toLowerCase().endsWith('@stu.smiu.edu.pk')) {
+        showToast('University email is required and MUST end with @stu.smiu.edu.pk', 'error');
+        return;
+      }
+      if (!(state.applyForm.student_id_num || '').trim()) {
+        showToast('Student ID is required', 'error');
+        return;
+      }
+      if (!(state.applyForm.student_name || '').trim()) {
+        showToast('Student Name is required', 'error');
+        return;
+      }
+    } else if (state.applyStep === 2) {
+      if (!(state.applyForm.group_name || '').trim()) {
+        showToast('FYP Group Name is required', 'error');
+        return;
+      }
+      if (!(state.applyForm.project_title || '').trim()) {
+        showToast('Project Title is required', 'error');
+        return;
+      }
+      if (!state.applyForm.internship_certificate_pdf) {
+        showToast('Internship Certificate (PDF ONLY) is required', 'error');
+        return;
+      }
+    } else if (state.applyStep === 3) {
+      if (!state.applyForm.pref_1) {
+        showToast('Supervisor Preference 1 is required', 'error');
+        return;
+      }
+    }
+  }
+  state.applyStep = step;
+  render();
+}
+
+function addApplyMember() {
+  if (state.applyForm.members.length >= 3) {
+    showToast('Maximum 3 additional group members allowed (4 total)', 'warning');
+    return;
+  }
+  state.applyForm.members.push({ name: '', student_id_num: '' });
+  render();
+}
+
+function removeApplyMember(index) {
+  state.applyForm.members.splice(index, 1);
+  render();
+}
+
+function handleApplicationPdfPick(e) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+
+  if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+    showToast('Internship Certificate MUST be a PDF file (.pdf)', 'error');
+    e.target.value = '';
+    return;
+  }
+
+  if (file.size > 10 * 1024 * 1024) {
+    showToast('PDF file size must be less than 10MB', 'error');
+    e.target.value = '';
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    state.applyForm.internship_certificate_pdf = reader.result;
+    state.applyForm.pdf_name = file.name;
+    state.applyForm.pdf_size = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
+    render();
+  };
+  reader.readAsDataURL(file);
+}
+
+function renderPublicApplicationPage() {
+  loadSupervisorsForApply();
+
+  if (state.applySubmitted && state.applySubmittedData) {
+    const resData = state.applySubmittedData || {};
+    const f = state.applyForm || {};
+    const d = {
+      id: resData.id || 'N/A',
+      student_name: resData.student_name || f.student_name || 'N/A',
+      email: resData.email || f.email || 'N/A',
+      program: resData.program || f.program || '',
+      shift: resData.shift || f.shift || '',
+      department: resData.department || f.department || '',
+      group_name: resData.group_name || f.group_name || 'N/A',
+      project_title: resData.project_title || f.project_title || 'N/A',
+      status: resData.status || 'submitted'
+    };
+
+    return `
+    <div class="min-h-screen bg-gradient-to-br from-slate-900 via-fypilot-900 to-indigo-950 flex items-center justify-center p-4 sm:p-6 fade-in">
+      <div class="max-w-2xl w-full bg-white rounded-3xl shadow-2xl p-6 sm:p-10 border border-white/20 text-center">
+        <div class="w-20 h-20 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-5 shadow-lg shadow-emerald-500/20">
+          <i class="fas fa-check-circle text-4xl"></i>
+        </div>
+        <span class="px-3 py-1 bg-emerald-100 text-emerald-800 rounded-full text-xs font-bold uppercase tracking-wider">Application Submitted</span>
+        <h1 class="text-2xl sm:text-3xl font-extrabold text-gray-900 mt-3">FYP Portal Registration Successful</h1>
+        <p class="text-sm text-gray-600 mt-2 max-w-lg mx-auto">Your FYP application has been received by the FYP Coordinator Committee. Your record will be reviewed and activated shortly.</p>
+        
+        <div class="bg-gray-50 border border-gray-200 rounded-2xl p-5 my-6 text-left space-y-3">
+          <div class="flex justify-between items-center"><span class="text-xs text-gray-500 font-semibold">Application Reference</span><span class="font-mono text-xs font-bold text-fypilot-700">${escapeHtml(d.id)}</span></div>
+          <div class="flex justify-between items-center"><span class="text-xs text-gray-500 font-semibold">Student Name</span><span class="text-xs font-bold text-gray-800">${escapeHtml(d.student_name)}</span></div>
+          <div class="flex justify-between items-center"><span class="text-xs text-gray-500 font-semibold">University Email</span><span class="text-xs font-bold text-gray-800 font-mono">${escapeHtml(d.email)}</span></div>
+          <div class="flex justify-between items-center"><span class="text-xs text-gray-500 font-semibold">Department &amp; Program</span><span class="text-xs font-bold text-gray-800">${escapeHtml(d.program)} ${escapeHtml(d.shift)} - ${escapeHtml(d.department)}</span></div>
+          <div class="flex justify-between items-center"><span class="text-xs text-gray-500 font-semibold">FYP Group Name</span><span class="text-xs font-bold text-gray-800">${escapeHtml(d.group_name)}</span></div>
+          <div class="flex justify-between items-center"><span class="text-xs text-gray-500 font-semibold">Project Title</span><span class="text-xs font-bold text-gray-800">${escapeHtml(d.project_title)}</span></div>
+          <div class="flex justify-between items-center"><span class="text-xs text-gray-500 font-semibold">Status</span><span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 capitalize">Under Coordinator Review</span></div>
+        </div>
+
+        <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 text-xs text-blue-800 text-left flex items-start gap-2 mb-6">
+          <i class="fas fa-info-circle text-blue-600 mt-0.5 shrink-0"></i>
+          <span>Once approved by the coordinator, your login account will be automatically activated. You will be able to log in using your university email (<b>${escapeHtml(d.email)}</b>).</span>
+        </div>
+
+        <div class="flex flex-wrap justify-center gap-3">
+          <button onclick="state.applySubmitted = false; state.applyStep = 1; window.location.href='/';" class="bg-gradient-to-r from-fypilot-600 to-indigo-600 text-white font-bold px-6 py-3 rounded-xl text-xs shadow-lg hover:scale-105 transition-all">
+            Return to Portal Home
+          </button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  const f = state.applyForm;
+  const currentDepts = (DEPARTMENT_MATRIX[f.program] && DEPARTMENT_MATRIX[f.program][f.shift]) || [];
+
+  return `
+  <div class="min-h-screen bg-gradient-to-br from-slate-900 via-fypilot-900 to-indigo-950 p-4 sm:p-8 flex items-center justify-center">
+    <div class="max-w-3xl w-full bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/20 overflow-hidden fade-in">
+      
+      <!-- Top Banner Header -->
+      <div class="bg-gradient-to-r from-fypilot-700 via-indigo-700 to-purple-800 text-white p-5 sm:p-8 relative">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between sm:justify-start gap-2">
+              <span class="inline-flex items-center gap-1.5 bg-white/20 border border-white/30 text-white text-[10px] sm:text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">
+                <i class="fas fa-graduation-cap"></i> SMIU FYP Portal
+              </span>
+              <button onclick="window.location.href='/'" class="sm:hidden bg-white/15 hover:bg-white/25 text-white px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1">
+                <i class="fas fa-sign-in-alt"></i> Login
+              </button>
+            </div>
+            <h1 class="text-xl sm:text-3xl font-extrabold text-white leading-tight">Public Student Application</h1>
+            <p class="text-indigo-200 text-xs sm:text-sm">Submit your FYP proposal details &amp; mandatory internship certificate.</p>
+          </div>
+          <button onclick="window.location.href='/'" class="hidden sm:flex bg-white/10 hover:bg-white/20 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all items-center gap-1.5 shrink-0 self-start sm:self-auto">
+            <i class="fas fa-sign-in-alt"></i> Login Screen
+          </button>
+        </div>
+
+        <!-- Multi-Step Progress Bar -->
+        <div class="mt-5 pt-4 border-t border-white/10">
+          <div class="grid grid-cols-4 gap-1.5 sm:gap-3">
+            ${[
+              { step: 1, label: 'Student Info', shortLabel: '1. Info' },
+              { step: 2, label: 'Group & Certificate', shortLabel: '2. Group' },
+              { step: 3, label: 'Supervisors', shortLabel: '3. Supervisors' },
+              { step: 4, label: 'Review & Submit', shortLabel: '4. Submit' }
+            ].map(s => `
+              <div onclick="setApplyStep(${s.step})" class="cursor-pointer text-center group">
+                <div class="h-2 rounded-full ${state.applyStep >= s.step ? 'bg-emerald-400 shadow-sm shadow-emerald-400/50' : 'bg-white/20'} transition-all mb-1.5"></div>
+                <span class="hidden sm:block text-[11px] font-bold truncate ${state.applyStep === s.step ? 'text-emerald-300 font-extrabold' : 'text-white/70'}">${s.label}</span>
+                <span class="block sm:hidden text-[10px] font-bold truncate ${state.applyStep === s.step ? 'text-emerald-300 font-extrabold' : 'text-white/60'}">${s.shortLabel}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+
+      <!-- Form Body Container -->
+      <div class="p-4 sm:p-8">
+        
+        ${state.applyStep === 1 ? `
+        <!-- STEP 1: Student & Academic Info -->
+        <div class="space-y-5 fade-in">
+          <div class="border-b border-gray-100 pb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 class="text-sm sm:text-base font-bold text-gray-900 flex items-center gap-2 min-w-0 flex-1">
+              <i class="fas fa-user-graduate text-fypilot-600 shrink-0"></i>
+              <span class="truncate sm:whitespace-normal">Step 1: Student &amp; Academic Information</span>
+            </h2>
+            <span class="text-xs font-semibold text-gray-500 bg-gray-100 px-2.5 py-0.5 rounded-full shrink-0">Step 1 of 4</span>
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold text-gray-700 mb-1">University Email Address * <span class="text-rose-500">(Must end with @stu.smiu.edu.pk)</span></label>
+            <input id="apply-email" type="email" value="${escapeHtml(f.email)}" oninput="state.applyForm.email = this.value" placeholder="e.g. csc-21f-001@stu.smiu.edu.pk" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none transition-all font-mono" />
+            <p class="text-[11px] text-gray-400 mt-1 flex items-center gap-1"><i class="fas fa-shield-alt text-emerald-500"></i> Official SMIU student email required for verification.</p>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs font-bold text-gray-700 mb-1">Student ID / Roll No *</label>
+              <input id="apply-student-id" type="text" value="${escapeHtml(f.student_id_num)}" oninput="state.applyForm.student_id_num = this.value" placeholder="e.g. CSC-21F-001" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none transition-all font-mono" />
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-gray-700 mb-1">Full Student Name *</label>
+              <input id="apply-name" type="text" value="${escapeHtml(f.student_name)}" oninput="state.applyForm.student_name = this.value" placeholder="e.g. Muhammad Ali" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none transition-all" />
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs font-bold text-gray-700 mb-1">Academic Program *</label>
+              <select id="apply-program" onchange="state.applyForm.program = this.value; updateApplyDepartmentOptions();" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none bg-white">
+                <option value="BS" ${f.program === 'BS' ? 'selected' : ''}>BS (Bachelor of Science)</option>
+                <option value="MS" ${f.program === 'MS' ? 'selected' : ''}>MS (Master of Science)</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-gray-700 mb-1">Shift *</label>
+              <select id="apply-shift" onchange="state.applyForm.shift = this.value; updateApplyDepartmentOptions();" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none bg-white">
+                <option value="Morning" ${f.shift === 'Morning' ? 'selected' : ''}>Morning</option>
+                <option value="Evening" ${f.shift === 'Evening' ? 'selected' : ''}>Evening</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold text-gray-700 mb-1">Department * <span class="text-xs text-fypilot-600 font-normal">(Filtered dynamically based on Program &amp; Shift)</span></label>
+            <select id="apply-department" onchange="state.applyForm.department = this.value" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none bg-white">
+              ${currentDepts.map(d => `<option value="${d}" ${f.department === d ? 'selected' : ''}>${d}</option>`).join('')}
+            </select>
+          </div>
+
+          <div class="flex justify-end pt-5 border-t border-gray-100">
+            <button onclick="setApplyStep(2)" class="w-full sm:w-auto bg-gradient-to-r from-fypilot-600 to-indigo-600 hover:from-fypilot-700 hover:to-indigo-700 text-white font-bold px-6 py-3 rounded-xl text-xs shadow-md transition-all flex items-center justify-center gap-2 whitespace-nowrap">
+              <span>Next: Group &amp; Certificate</span> <i class="fas fa-arrow-right"></i>
+            </button>
+          </div>
+        </div>
+        ` : ''}
+
+        ${state.applyStep === 2 ? `
+        <!-- STEP 2: Group Details & Internship Certificate PDF -->
+        <div class="space-y-5 fade-in">
+          <div class="border-b border-gray-100 pb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 class="text-sm sm:text-base font-bold text-gray-900 flex items-center gap-2 min-w-0 flex-1">
+              <i class="fas fa-users text-fypilot-600 shrink-0"></i>
+              <span class="truncate sm:whitespace-normal">Step 2: FYP Group, Project &amp; Certificate</span>
+            </h2>
+            <span class="text-xs font-semibold text-gray-500 bg-gray-100 px-2.5 py-0.5 rounded-full shrink-0">Step 2 of 4</span>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs font-bold text-gray-700 mb-1">FYP Group Name *</label>
+              <input id="apply-group-name" type="text" value="${escapeHtml(f.group_name)}" oninput="state.applyForm.group_name = this.value" placeholder="e.g. Visionary Coders" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none transition-all" />
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-gray-700 mb-1">Proposed Project Title *</label>
+              <input id="apply-project-title" type="text" value="${escapeHtml(f.project_title)}" oninput="state.applyForm.project_title = this.value" placeholder="e.g. AI-Powered Smart Agriculture System" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none transition-all" />
+            </div>
+          </div>
+
+          <!-- Mandatory Internship Certificate Upload (PDF ONLY) -->
+          <div class="bg-gray-50 border-2 border-dashed border-fypilot-300 rounded-2xl p-4 sm:p-5 text-center">
+            <i class="fas fa-file-pdf text-red-500 text-3xl mb-2"></i>
+            <h3 class="font-bold text-sm text-gray-900">Mandatory Internship Certificate *</h3>
+            <p class="text-xs text-gray-500 mt-1">Upload your official internship completion certificate in <b>PDF format ONLY (.pdf)</b></p>
+            
+            <input type="file" id="apply-cert-input" accept="application/pdf,.pdf" class="hidden" onchange="handleApplicationPdfPick(event)" />
+            
+            ${f.internship_certificate_pdf ? `
+              <div class="mt-4 bg-white border border-emerald-300 rounded-xl p-3 max-w-md mx-auto flex items-center justify-between shadow-sm">
+                <div class="flex items-center gap-2.5 min-w-0 flex-1">
+                  <i class="fas fa-file-pdf text-red-500 text-2xl shrink-0"></i>
+                  <div class="text-left min-w-0 flex-1">
+                    <span class="block text-xs font-bold text-gray-800 truncate">${f.pdf_name}</span>
+                    <span class="text-[10px] text-gray-400 block truncate">${f.pdf_size} &bull; PDF Verified</span>
+                  </div>
+                </div>
+                <button onclick="document.getElementById('apply-cert-input').click()" class="text-xs font-bold text-fypilot-600 hover:text-fypilot-800 border border-fypilot-200 px-2.5 py-1 rounded-lg shrink-0 ml-2">Change</button>
+              </div>
+            ` : `
+              <button onclick="document.getElementById('apply-cert-input').click()" class="mt-3 bg-white border border-gray-300 hover:border-fypilot-500 text-gray-700 font-bold px-4 py-2 rounded-xl text-xs shadow-sm transition-all flex items-center gap-2 mx-auto">
+                <i class="fas fa-upload text-fypilot-600"></i> Select PDF File
+              </button>
+            `}
+          </div>
+
+          <!-- Dynamic Group Members -->
+          <div>
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+              <label class="block text-xs font-bold text-gray-700">Group Members <span class="text-gray-400 font-normal">(Leader + up to 3 members)</span></label>
+              ${f.members.length < 3 ? `
+                <button onclick="addApplyMember()" class="text-xs font-bold text-fypilot-700 hover:text-fypilot-900 bg-fypilot-50 hover:bg-fypilot-100 border border-fypilot-200 px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 shrink-0 whitespace-nowrap">
+                  <i class="fas fa-plus-circle text-fypilot-600"></i> Add Member
+                </button>
+              ` : ''}
+            </div>
+
+            <div class="space-y-2">
+              ${f.members.map((m, idx) => `
+                <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl p-2.5">
+                  <div class="flex items-center gap-2 flex-1">
+                    <span class="w-6 h-6 rounded-full bg-fypilot-100 text-fypilot-700 font-bold text-[10px] flex items-center justify-center shrink-0">${idx + 1}</span>
+                    <input type="text" value="${escapeHtml(m.name)}" oninput="state.applyForm.members[${idx}].name = this.value" placeholder="Member Name" class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:ring-1 focus:ring-fypilot-500 focus:outline-none" />
+                  </div>
+                  <div class="flex items-center gap-2 pl-8 sm:pl-0">
+                    <input type="text" value="${escapeHtml(m.student_id_num)}" oninput="state.applyForm.members[${idx}].student_id_num = this.value" placeholder="Student ID (CSC-21F-xxx)" class="flex-1 sm:w-36 border border-gray-300 rounded-lg px-3 py-1.5 text-xs font-mono focus:ring-1 focus:ring-fypilot-500 focus:outline-none" />
+                    ${f.members.length > 1 ? `
+                      <button onclick="removeApplyMember(${idx})" title="Remove Member" class="p-1.5 text-gray-400 hover:text-rose-600 shrink-0"><i class="fas fa-trash-alt text-xs"></i></button>
+                    ` : ''}
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+
+          <div class="flex items-center justify-between gap-3 pt-5 border-t border-gray-100">
+            <button onclick="setApplyStep(1)" class="border border-gray-300 text-gray-700 font-bold px-4 sm:px-6 py-2.5 rounded-xl text-xs hover:bg-gray-50 transition-all flex items-center justify-center gap-1.5 shrink-0 whitespace-nowrap">
+              <i class="fas fa-arrow-left"></i> <span>Back</span>
+            </button>
+            <button onclick="setApplyStep(3)" class="bg-gradient-to-r from-fypilot-600 to-indigo-600 hover:from-fypilot-700 hover:to-indigo-700 text-white font-bold px-4 sm:px-6 py-2.5 rounded-xl text-xs shadow-md transition-all flex items-center justify-center gap-1.5 flex-1 sm:flex-none whitespace-nowrap">
+              <span>Next: Supervisors</span> <i class="fas fa-arrow-right"></i>
+            </button>
+          </div>
+        </div>
+        ` : ''}
+
+        ${state.applyStep === 3 ? `
+        <!-- STEP 3: Supervisor Preferences & Priority -->
+        <div class="space-y-5 fade-in">
+          <div class="border-b border-gray-100 pb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 class="text-sm sm:text-base font-bold text-gray-900 flex items-center gap-2 min-w-0 flex-1">
+              <i class="fas fa-user-tie text-fypilot-600 shrink-0"></i>
+              <span class="truncate sm:whitespace-normal">Step 3: Supervisor Preferences &amp; Priority</span>
+            </h2>
+            <span class="text-xs font-semibold text-gray-500 bg-gray-100 px-2.5 py-0.5 rounded-full shrink-0">Step 3 of 4</span>
+          </div>
+
+          <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800 flex items-start gap-2">
+            <i class="fas fa-info-circle text-amber-600 mt-0.5 shrink-0"></i>
+            <span>Select up to 3 faculty supervisor preferences in order of choice. The coordinator committee will review your selections.</span>
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold text-gray-700 mb-1">Supervisor Preference 1 * <span class="text-rose-500">(Required)</span></label>
+            <select id="apply-pref-1" onchange="state.applyForm.pref_1 = this.value; render();" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none bg-white">
+              <option value="">-- Select Preference 1 --</option>
+              ${state.supervisorsList.map(s => `<option value="${s.name}" ${f.pref_1 === s.name ? 'selected' : ''}>${s.name} (${s.department || 'CS'})</option>`).join('')}
+            </select>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs font-bold text-gray-700 mb-1">Supervisor Preference 2 <span class="text-gray-400 font-normal">(Optional)</span></label>
+              <select id="apply-pref-2" onchange="state.applyForm.pref_2 = this.value; render();" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none bg-white">
+                <option value="">-- Select Preference 2 --</option>
+                ${state.supervisorsList.map(s => `<option value="${s.name}" ${f.pref_2 === s.name ? 'selected' : ''}>${s.name} (${s.department || 'CS'})</option>`).join('')}
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-gray-700 mb-1">Supervisor Preference 3 <span class="text-gray-400 font-normal">(Optional)</span></label>
+              <select id="apply-pref-3" onchange="state.applyForm.pref_3 = this.value; render();" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none bg-white">
+                <option value="">-- Select Preference 3 --</option>
+                ${state.supervisorsList.map(s => `<option value="${s.name}" ${f.pref_3 === s.name ? 'selected' : ''}>${s.name} (${s.department || 'CS'})</option>`).join('')}
+              </select>
+            </div>
+          </div>
+
+          <!-- Urgent Priority Assignment per Selected Supervisor -->
+          <div class="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/80 rounded-2xl p-4 space-y-3">
+            <div class="flex flex-wrap items-center justify-between gap-1.5">
+              <label class="block text-xs font-bold text-gray-900 flex items-center gap-1.5">
+                <i class="fas fa-bolt text-amber-500"></i> Urgent Priority Assignment
+              </label>
+              <span class="text-[10px] bg-amber-200 text-amber-900 font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider">Select Supervisor Priority</span>
+            </div>
+            <p class="text-[11px] text-gray-600">You can assign expedited Urgent Priority review to a specific selected supervisor choice.</p>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+              <label class="flex items-center gap-2.5 p-3 bg-white border ${f.priority === 'Normal' ? 'border-amber-500 ring-2 ring-amber-400/20' : 'border-gray-200'} rounded-xl cursor-pointer hover:border-amber-400 transition-all">
+                <input type="radio" name="apply_priority_choice" value="Normal" ${f.priority === 'Normal' ? 'checked' : ''} onchange="state.applyForm.priority = 'Normal'; render();" class="accent-amber-600" />
+                <div>
+                  <span class="font-bold text-gray-800">Normal Priority</span>
+                  <span class="block text-[10px] text-gray-400">Standard evaluation queue for all choice(s)</span>
+                </div>
+              </label>
+
+              ${f.pref_1 ? `
+              <label class="flex items-center gap-2.5 p-3 bg-white border ${f.priority.includes(f.pref_1) ? 'border-amber-500 ring-2 ring-amber-400/20' : 'border-gray-200'} rounded-xl cursor-pointer hover:border-amber-400 transition-all">
+                <input type="radio" name="apply_priority_choice" value="Urgent: ${f.pref_1} (Preference 1)" ${f.priority.includes(f.pref_1) ? 'checked' : ''} onchange="state.applyForm.priority = 'Urgent: ${f.pref_1} (Preference 1)'; render();" class="accent-amber-600" />
+                <div class="truncate">
+                  <span class="font-bold text-amber-700 flex items-center gap-1"><i class="fas fa-bolt text-amber-500"></i> Urgent: Preference 1</span>
+                  <span class="block text-[10px] text-gray-600 truncate font-semibold">${f.pref_1}</span>
+                </div>
+              </label>
+              ` : ''}
+
+              ${f.pref_2 ? `
+              <label class="flex items-center gap-2.5 p-3 bg-white border ${f.priority.includes(f.pref_2) ? 'border-amber-500 ring-2 ring-amber-400/20' : 'border-gray-200'} rounded-xl cursor-pointer hover:border-amber-400 transition-all">
+                <input type="radio" name="apply_priority_choice" value="Urgent: ${f.pref_2} (Preference 2)" ${f.priority.includes(f.pref_2) ? 'checked' : ''} onchange="state.applyForm.priority = 'Urgent: ${f.pref_2} (Preference 2)'; render();" class="accent-amber-600" />
+                <div class="truncate">
+                  <span class="font-bold text-amber-700 flex items-center gap-1"><i class="fas fa-bolt text-amber-500"></i> Urgent: Preference 2</span>
+                  <span class="block text-[10px] text-gray-600 truncate font-semibold">${f.pref_2}</span>
+                </div>
+              </label>
+              ` : ''}
+
+              ${f.pref_3 ? `
+              <label class="flex items-center gap-2.5 p-3 bg-white border ${f.priority.includes(f.pref_3) ? 'border-amber-500 ring-2 ring-amber-400/20' : 'border-gray-200'} rounded-xl cursor-pointer hover:border-amber-400 transition-all">
+                <input type="radio" name="apply_priority_choice" value="Urgent: ${f.pref_3} (Preference 3)" ${f.priority.includes(f.pref_3) ? 'checked' : ''} onchange="state.applyForm.priority = 'Urgent: ${f.pref_3} (Preference 3)'; render();" class="accent-amber-600" />
+                <div class="truncate">
+                  <span class="font-bold text-amber-700 flex items-center gap-1"><i class="fas fa-bolt text-amber-500"></i> Urgent: Preference 3</span>
+                  <span class="block text-[10px] text-gray-600 truncate font-semibold">${f.pref_3}</span>
+                </div>
+              </label>
+              ` : ''}
+            </div>
+          </div>
+
+          <div class="flex items-center justify-between gap-3 pt-5 border-t border-gray-100">
+            <button onclick="setApplyStep(2)" class="border border-gray-300 text-gray-700 font-bold px-4 sm:px-6 py-2.5 rounded-xl text-xs hover:bg-gray-50 transition-all flex items-center justify-center gap-1.5 shrink-0 whitespace-nowrap">
+              <i class="fas fa-arrow-left"></i> <span>Back</span>
+            </button>
+            <button onclick="setApplyStep(4)" class="bg-gradient-to-r from-fypilot-600 to-indigo-600 hover:from-fypilot-700 hover:to-indigo-700 text-white font-bold px-4 sm:px-6 py-2.5 rounded-xl text-xs shadow-md transition-all flex items-center justify-center gap-1.5 flex-1 sm:flex-none whitespace-nowrap">
+              <span>Next: Review &amp; Submit</span> <i class="fas fa-arrow-right"></i>
+            </button>
+          </div>
+        </div>
+        ` : ''}
+
+        ${state.applyStep === 4 ? `
+        <!-- STEP 4: Final Review & Confirmation -->
+        <div class="space-y-5 fade-in">
+          <div class="border-b border-gray-100 pb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 class="text-sm sm:text-base font-bold text-gray-900 flex items-center gap-2 min-w-0 flex-1">
+              <i class="fas fa-check-double text-fypilot-600 shrink-0"></i>
+              <span class="truncate sm:whitespace-normal">Step 4: Final Review &amp; Confirmation</span>
+            </h2>
+            <span class="text-xs font-semibold text-gray-500 bg-gray-100 px-2.5 py-0.5 rounded-full shrink-0">Step 4 of 4</span>
+          </div>
+
+          <div class="bg-gray-50 border border-gray-200 rounded-2xl p-4 sm:p-5 space-y-3">
+            <h3 class="font-bold text-sm text-gray-900 flex items-center justify-between border-b pb-2">
+              <span>Application Summary</span>
+              <span class="text-xs text-fypilot-600 cursor-pointer hover:underline" onclick="setApplyStep(1)">Edit Information</span>
+            </h3>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div><span class="text-gray-400 font-semibold block">Student Name:</span><span class="font-bold text-gray-800 break-words">${f.student_name}</span></div>
+              <div><span class="text-gray-400 font-semibold block">Student ID:</span><span class="font-bold text-gray-800 font-mono">${f.student_id_num}</span></div>
+              <div><span class="text-gray-400 font-semibold block">Email:</span><span class="font-bold text-gray-800 font-mono break-all">${f.email}</span></div>
+              <div><span class="text-gray-400 font-semibold block">Program &amp; Shift:</span><span class="font-bold text-gray-800">${f.program} (${f.shift})</span></div>
+              <div class="sm:col-span-2"><span class="text-gray-400 font-semibold block">Department:</span><span class="font-bold text-gray-800 break-words">${f.department}</span></div>
+            </div>
+
+            <div class="border-t pt-3 space-y-2 text-xs">
+              <div><span class="text-gray-400 font-semibold block">FYP Group Name:</span><span class="font-bold text-gray-800">${f.group_name}</span></div>
+              <div><span class="text-gray-400 font-semibold block">Project Title:</span><span class="font-bold text-gray-800">${f.project_title}</span></div>
+              <div><span class="text-gray-400 font-semibold block">Supervisor Preferences:</span><span class="font-bold text-gray-800">1: ${f.pref_1} ${f.pref_2 ? '| 2: ' + f.pref_2 : ''} ${f.pref_3 ? '| 3: ' + f.pref_3 : ''}</span></div>
+              <div><span class="text-gray-400 font-semibold block">Priority Designation:</span><span class="font-bold text-amber-700 capitalize">${f.priority}</span></div>
+              <div><span class="text-gray-400 font-semibold block">Internship Certificate:</span><span class="font-bold text-emerald-600 flex items-center gap-1"><i class="fas fa-file-pdf text-red-500"></i> ${f.pdf_name} (${f.pdf_size})</span></div>
+            </div>
+          </div>
+
+          <label class="flex items-start gap-3 p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl cursor-pointer">
+            <input type="checkbox" id="apply-confirm-check" class="mt-0.5 accent-emerald-600" />
+            <span class="text-xs text-emerald-900 font-medium leading-relaxed">I confirm that all provided academic information, team details, and the uploaded internship certificate PDF are accurate and authentic.</span>
+          </label>
+
+          <div class="flex items-center justify-between gap-3 pt-5 border-t border-gray-100">
+            <button onclick="setApplyStep(3)" class="border border-gray-300 text-gray-700 font-bold px-4 sm:px-6 py-2.5 rounded-xl text-xs hover:bg-gray-50 transition-all flex items-center justify-center gap-1.5 shrink-0 whitespace-nowrap">
+              <i class="fas fa-arrow-left"></i> <span>Back</span>
+            </button>
+            <button onclick="submitPublicApplication()" class="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-bold px-4 sm:px-8 py-3 rounded-xl text-xs shadow-lg transition-all flex items-center justify-center gap-1.5 flex-1 sm:flex-none whitespace-nowrap">
+              <i class="fas fa-paper-plane"></i> <span>Submit FYP Application</span>
+            </button>
+          </div>
+        </div>
+        ` : ''}
+
+      </div>
+    </div>
+  </div>`;
+}
+
+function attachApplicationFormListeners() {}
+
+async function submitPublicApplication() {
+  const check = document.getElementById('apply-confirm-check');
+  if (check && !check.checked) {
+    showToast('Please check the confirmation box to submit', 'warning');
+    return;
+  }
+
+  const f = state.applyForm;
+
+  // Send payload with both parameter keys for complete backend compatibility
+  const payload = {
+    email: f.email,
+    student_id: f.student_id_num,
+    student_id_num: f.student_id_num,
+    student_name: f.student_name,
+    program: f.program,
+    shift: f.shift,
+    department: f.department,
+    group_name: f.group_name,
+    project_title: f.project_title,
+    group_members: f.members,
+    members: f.members,
+    supervisor_preference_1: f.pref_1,
+    pref_1: f.pref_1,
+    supervisor_preference_2: f.pref_2,
+    pref_2: f.pref_2,
+    supervisor_preference_3: f.pref_3,
+    pref_3: f.pref_3,
+    supervisor_priority: f.priority,
+    priority: f.priority,
+    internship_certificate: f.internship_certificate_pdf,
+    internship_certificate_pdf: f.internship_certificate_pdf,
+    internship_filename: f.pdf_name,
+    pdf_name: f.pdf_name
+  };
+
+  try {
+    const res = await api('/applications', { method: 'POST', body: JSON.stringify(payload) });
+    if (res.success) {
+      state.applySubmitted = true;
+      state.applySubmittedData = res.data;
+      showToast('Application submitted successfully!', 'success');
+      render();
+    }
+  } catch (e) {}
+}
+
+// ===== Admin Governance Panel =====
+
+// Applications polling timer
+let _appsPollTimer = null;
+
+function startApplicationsPolling() {
+  stopApplicationsPolling();
+  _appsPollTimer = setInterval(async () => {
+    if (state.currentView !== 'applications') { stopApplicationsPolling(); return; }
+    try {
+      const res = await api('/applications', { silentError: true });
+      const fresh = res.data || [];
+      // Only repaint if something actually changed
+      if (JSON.stringify(fresh) !== JSON.stringify(state.applications)) {
+        state.applications = fresh;
+        refreshApplicationsGrid();
+      }
+    } catch (e) {}
+  }, 20000);
+}
+
+function stopApplicationsPolling() {
+  if (_appsPollTimer) { clearInterval(_appsPollTimer); _appsPollTimer = null; }
+}
+async function loadApplications() {
+  try {
+    const res = await api('/applications');
+    state.applications = res.data || [];
+    refreshApplicationsGrid();
+  } catch (e) {
+    state.applications = [];
+    refreshApplicationsGrid();
+  }
+}
+
+// Renders only the grid cards — called on search / tab / poll updates without full DOM nuke
+function renderApplicationsGrid(filtered) {
+  if (!filtered || !filtered.length) {
+    return `
+      <div class="bg-white rounded-2xl border border-gray-200 p-12 text-center text-gray-400">
+        <i class="fas fa-folder-open text-4xl mb-3 text-gray-300"></i>
+        <p class="font-bold text-sm text-gray-600">No applications found</p>
+        <p class="text-xs mt-1">Share public application link <b>/apply</b> with students.</p>
+      </div>`;
+  }
+  return `
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      ${filtered.map(a => `
+        <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between mb-3">
+              <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${a.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : a.status === 'rejected' ? 'bg-rose-100 text-rose-700' : a.status === 'revision_requested' ? 'bg-purple-100 text-purple-700' : 'bg-amber-100 text-amber-700'}">${a.status.replace('_', ' ')}</span>
+              <span class="text-[10px] font-bold font-mono text-gray-400">${a.program} ${a.shift}</span>
+            </div>
+            <h3 class="font-bold text-gray-900 text-sm truncate">${escapeHtml(a.student_name)}</h3>
+            <p class="text-xs text-gray-500 truncate font-mono">${escapeHtml(a.email)}</p>
+            <div class="mt-3 pt-3 border-t space-y-1 text-xs">
+              <div class="flex justify-between"><span class="text-gray-400">Dept:</span><span class="font-semibold text-gray-700 truncate max-w-[150px]">${a.department}</span></div>
+              <div class="flex justify-between"><span class="text-gray-400">Group:</span><span class="font-semibold text-gray-700 truncate max-w-[150px]">${a.group_name}</span></div>
+              <div class="flex justify-between"><span class="text-gray-400">Project:</span><span class="font-semibold text-gray-700 truncate max-w-[150px]">${a.project_title}</span></div>
+            </div>
+          </div>
+          <div class="mt-4 pt-3 border-t flex items-center justify-between">
+            <span class="text-[10px] text-gray-400"><i class="fas fa-file-pdf text-red-500 mr-1"></i>PDF Certificate</span>
+            <button onclick="showReviewApplicationModal('${a.id}')" class="bg-fypilot-50 hover:bg-fypilot-100 text-fypilot-700 font-bold px-3 py-1.5 rounded-xl text-xs transition-all">Review Application</button>
+          </div>
+        </div>
+      `).join('')}
+    </div>`;
+}
+
+// Re-paints only the grid container (no full render) — preserves search focus
+function refreshApplicationsGrid() {
+  const list = state.applications || [];
+  const tab = state.applicationsTab || 'all';
+  const q = (state.applicationsSearch || '').toLowerCase();
+
+  const filtered = list.filter(a => {
+    if (tab !== 'all' && a.status !== tab) return false;
+    if (q) {
+      const match = (a.student_name || '').toLowerCase().includes(q) ||
+                    (a.email || '').toLowerCase().includes(q) ||
+                    (a.project_title || '').toLowerCase().includes(q) ||
+                    (a.department || '').toLowerCase().includes(q);
+      if (!match) return false;
+    }
+    return true;
+  });
+
+  // Update tab pills (highlight active)
+  const tabs = ['all', 'submitted', 'approved', 'rejected', 'revision_requested'];
+  tabs.forEach(t => {
+    const el = document.querySelector(`[data-apps-tab="${t}"]`);
+    if (!el) return;
+    if (t === tab) {
+      el.className = 'px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition-all shrink-0 bg-white text-fypilot-700 shadow-sm';
+    } else {
+      el.className = 'px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition-all shrink-0 text-gray-500 hover:text-gray-800';
+    }
+  });
+
+  // Update grid
+  const grid = document.getElementById('apps-grid-container');
+  if (grid) grid.innerHTML = renderApplicationsGrid(filtered);
+}
+
+function renderApplicationsList() {
+  if (!state.applications.length) {
+    loadApplications();
+  }
+
+  const list = state.applications || [];
+  const tab = state.applicationsTab || 'all';
+
+  const filtered = list.filter(a => {
+    if (tab !== 'all' && a.status !== tab) return false;
+    return true;
+  });
+
+  // Attach search listener once rendered
+  setTimeout(() => {
+    const input = document.getElementById('apps-search-input');
+    if (input) {
+      input.oninput = (e) => {
+        state.applicationsSearch = e.target.value;
+        refreshApplicationsGrid();
+      };
+    }
+  }, 100);
+
+  return `
+  <div class="fade-in space-y-6">
+    <!-- Header Banner -->
+    <div class="bg-gradient-to-r from-purple-900 via-indigo-900 to-slate-900 text-white rounded-2xl p-6 shadow-xl border border-purple-500/20">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <span class="inline-flex items-center gap-1.5 bg-purple-500/30 border border-purple-400/30 text-purple-200 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">
+            <i class="fas fa-file-signature"></i> Application Governance
+          </span>
+          <h1 class="text-2xl sm:text-3xl font-bold mt-2">Student Public Applications</h1>
+          <p class="text-purple-200 text-sm mt-1">Review student applications, verify internship PDF certificates &amp; auto-provision accounts.</p>
+        </div>
+        <button onclick="loadApplications()" class="bg-white/10 hover:bg-white/20 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 self-start">
+          <i class="fas fa-sync-alt"></i> Refresh Applications
+        </button>
+      </div>
+    </div>
+
+    <!-- Filters & Search -->
+    <div class="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">
+      <div class="flex bg-gray-100 p-1 rounded-xl gap-1 overflow-x-auto no-scrollbar scrollbar-none max-w-full" id="apps-tab-bar">
+        ${['all', 'submitted', 'approved', 'rejected', 'revision_requested'].map(t => `
+          <button data-apps-tab="${t}" onclick="state.applicationsTab = '${t}'; refreshApplicationsGrid();" class="px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition-all shrink-0 ${tab === t ? 'bg-white text-fypilot-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}">
+            ${t.replace('_', ' ')}
+          </button>
+        `).join('')}
+      </div>
+
+      <div class="relative w-full sm:w-72">
+        <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs"></i>
+        <input id="apps-search-input" type="text" value="${escapeHtml(state.applicationsSearch)}" placeholder="Search name, email, project..." class="w-full pl-9 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:bg-white focus:ring-2 focus:ring-fypilot-500 outline-none" />
+      </div>
+    </div>
+
+    <!-- Applications Grid (partial-update target) -->
+    <div id="apps-grid-container">
+      ${renderApplicationsGrid(filtered)}
+    </div>
+  </div>`;
+}
+
+async function showReviewApplicationModal(id) {
+  let appItem = (state.applications || []).find(a => a.id === id);
+  
+  try {
+    const res = await api(`/applications/${id}`);
+    if (res && res.data) {
+      appItem = res.data;
+    }
+  } catch (e) {
+    console.error('Failed to fetch full application detail:', e);
+  }
+
+  if (!appItem) {
+    showToast('Application details could not be loaded', 'error');
+    return;
+  }
+
+  const p1 = appItem.supervisor_1_name || appItem.supervisor_preference_1 || appItem.pref_1 || 'None';
+  const p2 = appItem.supervisor_2_name || appItem.supervisor_preference_2 || appItem.pref_2 || '';
+  const p3 = appItem.supervisor_3_name || appItem.supervisor_preference_3 || appItem.pref_3 || '';
+  const priority = appItem.supervisor_priority || appItem.priority || 'Normal';
+  const studentId = appItem.student_id_num || appItem.student_id || 'N/A';
+  const pdfCert = appItem.internship_certificate || appItem.internship_certificate_pdf;
+  const pdfFilename = appItem.internship_filename || appItem.pdf_name || `Internship_Certificate_${studentId}.pdf`;
+
+  let members = [];
+  try {
+    const rawMem = appItem.group_members || appItem.members;
+    members = typeof rawMem === 'string' ? JSON.parse(rawMem) : (rawMem || []);
+  } catch(e) {}
+
+  const overlay = document.createElement('div');
+  overlay.id = 'app-modal-overlay';
+  overlay.className = 'fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4';
+
+  overlay.innerHTML = `
+  <div class="bg-white rounded-3xl shadow-2xl w-full max-w-2xl sm:max-w-3xl max-h-[90vh] overflow-y-auto no-scrollbar scrollbar-none fade-in">
+    <div class="p-4 sm:p-6 border-b border-gray-100 flex items-center justify-between gap-3 bg-gray-50 rounded-t-3xl">
+      <div class="min-w-0 flex-1">
+        <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase inline-block ${appItem.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : appItem.status === 'rejected' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}">${appItem.status.replace('_', ' ')}</span>
+        <h3 class="font-bold text-base sm:text-lg text-gray-900 mt-0.5 leading-tight truncate">Review Student FYP Application</h3>
+      </div>
+      <button onclick="document.getElementById('app-modal-overlay').remove()" class="w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-200 flex items-center justify-center shrink-0"><i class="fas fa-times"></i></button>
+    </div>
+    
+    <div class="p-4 sm:p-6 space-y-5">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-gray-50 rounded-2xl p-4 text-xs">
+        <div><span class="text-gray-400 font-semibold block">Student Name:</span><span class="font-bold text-gray-900 break-words">${escapeHtml(appItem.student_name)}</span></div>
+        <div><span class="text-gray-400 font-semibold block">University Email:</span><span class="font-bold text-gray-900 font-mono break-all">${escapeHtml(appItem.email)}</span></div>
+        <div><span class="text-gray-400 font-semibold block">Student ID:</span><span class="font-bold text-gray-900 font-mono">${escapeHtml(studentId)}</span></div>
+        <div><span class="text-gray-400 font-semibold block">Program / Shift:</span><span class="font-bold text-gray-900">${appItem.program} (${appItem.shift})</span></div>
+        <div class="sm:col-span-2"><span class="text-gray-400 font-semibold block">Department:</span><span class="font-bold text-gray-900 break-words">${escapeHtml(appItem.department)}</span></div>
+      </div>
+
+      <div class="border-t pt-3 space-y-2 text-xs">
+        <div><span class="text-gray-400 font-semibold block">FYP Group Name:</span><span class="font-bold text-gray-900 text-sm break-words">${escapeHtml(appItem.group_name)}</span></div>
+        <div><span class="text-gray-400 font-semibold block">Project Title:</span><span class="font-bold text-gray-900 text-sm break-words">${escapeHtml(appItem.project_title)}</span></div>
+        <div><span class="text-gray-400 font-semibold block">Supervisor Preferences:</span><span class="font-bold text-gray-800 break-words">1: ${escapeHtml(p1)} ${p2 ? '| 2: ' + escapeHtml(p2) : ''} ${p3 ? '| 3: ' + escapeHtml(p3) : ''}</span></div>
+        <div><span class="text-gray-400 font-semibold block">Priority Designation:</span><span class="font-bold text-amber-700 capitalize break-words">${escapeHtml(priority)}</span></div>
+        ${appItem.admin_notes ? `<div><span class="text-gray-400 font-semibold block">Admin Notes:</span><span class="font-medium text-gray-700 break-words">${escapeHtml(appItem.admin_notes)}</span></div>` : ''}
+      </div>
+
+      ${members.length ? `
+        <div class="border-t pt-3">
+          <h4 class="text-xs font-bold text-gray-700 mb-2">Group Team Members (${members.length})</h4>
+          <div class="space-y-1.5">
+            ${members.map(m => `<div class="text-xs bg-gray-50 border border-gray-200 p-2.5 rounded-xl flex flex-wrap justify-between items-center gap-1"><span class="font-semibold text-gray-800 break-words">${escapeHtml(m.name || m.student_name)}</span><span class="font-mono text-gray-500">${escapeHtml(m.student_id_num || m.student_id)}</span></div>`).join('')}
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- Internship PDF Certificate Viewer & Download -->
+      <div class="border-t pt-3 space-y-2">
+        <h4 class="text-xs font-bold text-gray-700 flex items-center justify-between">
+          <span><i class="fas fa-file-pdf text-red-500 mr-1.5"></i> Internship Certificate PDF Document</span>
+          ${pdfCert ? `<span class="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">PDF Attached</span>` : ''}
+        </h4>
+
+        ${pdfCert ? `
+          <div class="bg-slate-900 rounded-2xl p-4 text-white space-y-3">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <span class="text-xs font-mono text-gray-300 truncate max-w-full sm:max-w-xs"><i class="fas fa-paperclip text-red-400 mr-1"></i> ${escapeHtml(pdfFilename)}</span>
+              <div class="flex flex-wrap items-center gap-2">
+                <button onclick="openPdfDataUrlInNewTab('${escapeHtml(pdfCert)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs transition-all flex items-center gap-1">
+                  <i class="fas fa-external-link-alt"></i> Open Full Screen
+                </button>
+                <a href="${pdfCert}" download="${escapeHtml(pdfFilename)}" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs transition-all flex items-center gap-1">
+                  <i class="fas fa-download"></i> Download PDF
+                </a>
+              </div>
+            </div>
+
+            <!-- Embedded PDF Preview Frame -->
+            <div class="rounded-xl overflow-hidden border border-slate-700 bg-slate-800">
+              <iframe src="${pdfCert}" class="w-full h-60 sm:h-72 border-0 bg-white" title="Internship Certificate PDF"></iframe>
+            </div>
+          </div>
+        ` : `
+          <div class="p-4 bg-gray-50 border border-gray-200 rounded-2xl text-center text-xs text-gray-500">
+            No PDF internship certificate document attached.
+          </div>
+        `}
+      </div>
+
+      ${appItem.status !== 'approved' ? `
+        <div class="border-t pt-4 flex flex-wrap gap-2 justify-end">
+          <button onclick="updateApplicationStatus('${appItem.id}', 'approved')" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-5 py-2.5 rounded-xl text-xs shadow-md transition-all flex items-center gap-1.5">
+            <i class="fas fa-check-circle"></i> Approve &amp; Auto-Provision Account
+          </button>
+          <button onclick="updateApplicationStatus('${appItem.id}', 'revision_requested')" class="bg-purple-600 hover:bg-purple-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs transition-all">
+            Request Changes
+          </button>
+          <button onclick="updateApplicationStatus('${appItem.id}', 'rejected')" class="bg-rose-600 hover:bg-rose-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs transition-all">
+            Reject Application
+          </button>
+        </div>
+      ` : `
+        <div class="border-t pt-3 bg-emerald-50 border-emerald-200 rounded-2xl p-3 text-xs text-emerald-800 font-semibold flex items-center gap-2">
+          <i class="fas fa-check-circle text-emerald-600 text-base"></i>
+          <span>Application Approved! Student user account, group, proposal &amp; project were automatically provisioned.</span>
+        </div>
+      `}
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+function openPdfDataUrlInNewTab(dataUrl) {
+  try {
+    const parts = dataUrl.split(',');
+    if (parts.length < 2) {
+      window.open(dataUrl, '_blank');
+      return;
+    }
+    const mimeMatch = parts[0].match(/:(.*?);/);
+    const mime = mimeMatch ? mimeMatch[1] : 'application/pdf';
+    const bstr = atob(parts[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    const blob = new Blob([u8arr], { type: mime });
+    const blobUrl = URL.createObjectURL(blob);
+    window.open(blobUrl, '_blank');
+  } catch (e) {
+    console.error('DataURL blob conversion failed:', e);
+    window.open(dataUrl, '_blank');
+  }
+}
+window.openPdfDataUrlInNewTab = openPdfDataUrlInNewTab;
+
+async function updateApplicationStatus(id, status) {
+  if (status === 'approved') {
+    showApproveWithPasswordDialog(id);
+    return;
+  }
+
+  // For reject / revision_requested — prompt for notes
+  const notes = prompt(`Enter admin notes for "${status.replace('_', ' ')}" (optional):`);
+  try {
+    const res = await api(`/applications/${id}/status`, {
+      method: 'PUT',
+      body: JSON.stringify({ status, admin_notes: notes || '' })
+    });
+    if (res.success) {
+      showToast(res.message || `Application status updated to ${status}`, 'success');
+      const o = document.getElementById('app-modal-overlay');
+      if (o) o.remove();
+      loadApplications();
+    }
+  } catch (e) {}
+}
+
+function generateRandomStudentPassword() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%';
+  let result = 'SMIU@';
+  for (let i = 0; i < 6; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  const input = document.getElementById('approve-pwd-input');
+  if (input) {
+    input.value = result;
+    input.type = 'text';
+    const icon = document.getElementById('toggle-approve-pwd-icon');
+    if (icon) icon.className = 'fas fa-eye-slash text-xs';
+    input.dispatchEvent(new Event('input'));
+  }
+  showToast('Random password generated!', 'success');
+}
+window.generateRandomStudentPassword = generateRandomStudentPassword;
+
+function showApproveWithPasswordDialog(appId) {
+  // Find the application from state to pre-fill info
+  const app = (state.applications || []).find(a => a.id === appId) || {};
+  const studentEmail = app.email || '';
+  const studentName = app.student_name || 'Student';
+
+  // Remove existing dialog if open
+  const existing = document.getElementById('approve-pwd-overlay');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'approve-pwd-overlay';
+  overlay.className = 'fixed inset-0 z-[200] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4';
+
+  overlay.innerHTML = `
+  <div class="bg-white rounded-3xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto no-scrollbar scrollbar-none fade-in">
+    <div class="p-4 sm:p-5 border-b border-gray-100 flex items-center justify-between gap-3 bg-emerald-50 rounded-t-3xl">
+      <div class="min-w-0 flex-1">
+        <span class="text-xs font-bold text-emerald-700 flex items-center gap-1.5"><i class="fas fa-user-check"></i> Approve &amp; Provision Account</span>
+        <h3 class="font-bold text-base text-gray-900 mt-0.5 truncate">Set Student Login Password</h3>
+      </div>
+      <button onclick="document.getElementById('approve-pwd-overlay').remove()" class="w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-200 flex items-center justify-center shrink-0">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+
+    <div class="p-4 sm:p-5 space-y-4">
+      <div class="bg-blue-50 border border-blue-200 rounded-2xl p-3 text-xs text-blue-800 flex items-start gap-2">
+        <i class="fas fa-info-circle text-blue-500 mt-0.5 shrink-0"></i>
+        <span>Set or generate a login password for <strong>${escapeHtml(studentName)}</strong>. Upon approval, this student account will be activated and ready for login.</span>
+      </div>
+
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs font-bold text-gray-700 mb-1">Student Email / Login Username</label>
+          <div class="flex items-center gap-2 bg-gray-100 border border-gray-200 rounded-xl px-3 py-2.5">
+            <i class="fas fa-envelope text-gray-400 text-xs shrink-0"></i>
+            <span class="text-xs font-mono text-gray-700 flex-1 break-all truncate">${escapeHtml(studentEmail)}</span>
+            <button onclick="navigator.clipboard.writeText('${escapeHtml(studentEmail)}').then(()=>showToast('Email copied!','success'))" class="text-fypilot-600 hover:text-fypilot-800 text-xs shrink-0 p-1" title="Copy">
+              <i class="fas fa-copy"></i>
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-1.5 mb-1.5">
+            <label class="block text-xs font-bold text-gray-700 shrink-0">Set Login Password <span class="text-rose-500">*</span></label>
+            <button type="button" onclick="generateRandomStudentPassword()" class="text-emerald-700 hover:text-emerald-900 text-[11px] font-bold inline-flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2.5 py-1 rounded-lg transition-all shadow-xs shrink-0">
+              <i class="fas fa-magic text-[10px]"></i> Auto-Generate Password
+            </button>
+          </div>
+          <div class="relative">
+            <input id="approve-pwd-input" type="password" placeholder="Enter password or click Auto-Generate" minlength="6"
+              class="w-full pl-3.5 pr-9 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all" />
+            <button type="button" onclick="
+              const i = document.getElementById('approve-pwd-input');
+              const ic = document.getElementById('toggle-approve-pwd-icon');
+              if(i.type==='password'){i.type='text';ic.className='fas fa-eye-slash text-xs';}
+              else{i.type='password';ic.className='fas fa-eye text-xs';}
+            " class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1">
+              <i id="toggle-approve-pwd-icon" class="fas fa-eye text-xs"></i>
+            </button>
+          </div>
+          <p class="text-[10px] text-gray-400 mt-1">Minimum 6 characters. Share this password directly with the student.</p>
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold text-gray-700 mb-1">Admin Notes <span class="text-gray-400 font-normal">(Optional)</span></label>
+          <textarea id="approve-notes-input" rows="2" placeholder="Any internal notes for this approval..."
+            class="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500 resize-none"></textarea>
+        </div>
+      </div>
+
+      <!-- Credential Preview Card -->
+      <div id="cred-preview-card" class="hidden bg-gradient-to-r from-emerald-900 to-teal-900 text-white rounded-2xl p-4 text-xs space-y-2">
+        <div class="flex items-center gap-2 font-bold text-emerald-300 text-[10px] uppercase tracking-wider"><i class="fas fa-id-card"></i> Student Login Credentials</div>
+        <div class="flex justify-between"><span class="text-emerald-300">Name:</span><span class="font-bold">${escapeHtml(studentName)}</span></div>
+        <div class="flex justify-between"><span class="text-emerald-300">Email:</span><span class="font-mono font-bold break-all">${escapeHtml(studentEmail)}</span></div>
+        <div class="flex justify-between"><span class="text-emerald-300">Password:</span><span id="cred-pwd-display" class="font-mono font-bold tracking-wider">—</span></div>
+        <div class="flex justify-between"><span class="text-emerald-300">Portal URL:</span><span class="font-mono break-all">${window.location.origin}</span></div>
+      </div>
+    </div>
+
+    <div class="px-5 pb-5 flex flex-wrap gap-2 justify-end">
+      <button onclick="document.getElementById('approve-pwd-overlay').remove()" class="border border-gray-200 text-gray-600 font-bold px-4 py-2.5 rounded-xl text-xs hover:bg-gray-50 transition-all flex-1 sm:flex-none">
+        Cancel
+      </button>
+      <button onclick="submitApproveWithPassword('${appId}')" class="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-md transition-all flex items-center justify-center gap-1.5 flex-1 sm:flex-none">
+        <i class="fas fa-check-circle"></i> Approve &amp; Create Account
+      </button>
+    </div>
+  </div>`;
+
+  document.body.appendChild(overlay);
+
+  // Live-update the credential preview card as user types
+  const pwdInput = document.getElementById('approve-pwd-input');
+  if (pwdInput) {
+    pwdInput.addEventListener('input', () => {
+      const val = pwdInput.value;
+      const card = document.getElementById('cred-preview-card');
+      const display = document.getElementById('cred-pwd-display');
+      if (val.length >= 6) {
+        if (card) card.classList.remove('hidden');
+        if (display) display.textContent = val;
+      } else {
+        if (card) card.classList.add('hidden');
+      }
+    });
+    setTimeout(() => pwdInput.focus(), 100);
+  }
+}
+
+async function submitApproveWithPassword(appId) {
+  const app = (state.applications || []).find(a => a.id === appId) || {};
+  const pwdInput = document.getElementById('approve-pwd-input');
+  const notesInput = document.getElementById('approve-notes-input');
+  const password = pwdInput ? pwdInput.value.trim() : '';
+  const admin_notes = notesInput ? notesInput.value.trim() : '';
+
+  if (!password || password.length < 6) {
+    showToast('Password must be at least 6 characters', 'warning');
+    if (pwdInput) pwdInput.focus();
+    return;
+  }
+
+  const btn = document.querySelector('#approve-pwd-overlay button[onclick*="submitApproveWithPassword"]');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Approving...'; }
+
+  try {
+    const res = await api(`/applications/${appId}/status`, {
+      method: 'PUT',
+      body: JSON.stringify({ status: 'approved', password, admin_notes })
+    });
+    if (res.success) {
+      showToast(res.message || 'Application approved and student account created!', 'success');
+      
+      const pwdOverlay = document.getElementById('approve-pwd-overlay');
+      if (pwdOverlay) pwdOverlay.remove();
+      const appOverlay = document.getElementById('app-modal-overlay');
+      if (appOverlay) appOverlay.remove();
+
+      // Show Credential Summary Pop-Up so Admin can easily copy credentials for the student
+      showCreatedCredentialsModal(app.student_name || 'Student', app.email || '', password);
+
+      loadApplications();
+    }
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-check-circle"></i> Approve & Create Account'; }
+  }
+}
+
+function showCreatedCredentialsModal(name, email, password) {
+  const credText = `FYPilot Student Account Created Successfully!
+Student Name: ${name}
+Email / Username: ${email}
+Password: ${password}
+Portal URL: ${window.location.origin}`;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'created-cred-modal';
+  overlay.className = 'fixed inset-0 z-[220] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4';
+
+  overlay.innerHTML = `
+  <div class="bg-white rounded-3xl shadow-2xl w-full max-w-md fade-in">
+    <div class="p-5 border-b border-gray-100 flex items-center justify-between bg-emerald-600 text-white rounded-t-3xl">
+      <div>
+        <span class="text-xs font-bold text-emerald-200 uppercase tracking-wider"><i class="fas fa-check-circle mr-1"></i> Account Provisioned</span>
+        <h3 class="font-bold text-base mt-0.5">Student Login Details</h3>
+      </div>
+      <button onclick="document.getElementById('created-cred-modal').remove()" class="w-8 h-8 rounded-lg text-emerald-200 hover:bg-white/10 flex items-center justify-center">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+
+    <div class="p-5 space-y-4 text-xs">
+      <p class="text-gray-600">The application is approved and the account is active. Copy the login credentials below to share with the student:</p>
+      
+      <div class="bg-slate-900 text-white rounded-2xl p-4 space-y-2 font-mono border border-slate-800">
+        <div class="flex justify-between border-b border-slate-800 pb-1.5"><span class="text-emerald-400 font-sans">Name:</span><span class="font-bold">${escapeHtml(name)}</span></div>
+        <div class="flex justify-between border-b border-slate-800 pb-1.5"><span class="text-emerald-400 font-sans">Email (Login):</span><span class="font-bold">${escapeHtml(email)}</span></div>
+        <div class="flex justify-between border-b border-slate-800 pb-1.5"><span class="text-emerald-400 font-sans">Password:</span><span class="font-bold text-amber-400">${escapeHtml(password)}</span></div>
+        <div class="flex justify-between"><span class="text-emerald-400 font-sans">URL:</span><span>${window.location.origin}</span></div>
+      </div>
+    </div>
+
+    <div class="px-5 pb-5 flex gap-2 justify-end">
+      <button onclick="
+        navigator.clipboard.writeText(\`${credText}\`).then(() => {
+          showToast('Credentials copied to clipboard!', 'success');
+        });
+      " class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-md transition-all flex items-center gap-1.5">
+        <i class="fas fa-copy"></i> Copy Credentials
+      </button>
+      <button onclick="document.getElementById('created-cred-modal').remove()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold px-4 py-2.5 rounded-xl text-xs transition-all">
+        Close
+      </button>
+    </div>
+  </div>`;
+
+  document.body.appendChild(overlay);
+}
+window.showCreatedCredentialsModal = showCreatedCredentialsModal;
+
+
+// ===== Weekly Updates & Meeting Verification Workflows =====
+
+async function submitWeeklyUpdate(projectId) {
+  const week_number = document.getElementById('wu-week').value;
+  const lifecycle_stage = document.getElementById('wu-stage').value;
+  const progress_pct = document.getElementById('wu-progress').value;
+  const work_done = document.getElementById('wu-work-done').value.trim();
+  const description = document.getElementById('wu-desc').value.trim();
+  const planned_work = document.getElementById('wu-planned').value.trim();
+
+  if (!work_done || !description || !planned_work) {
+    showToast('Please fill all required update fields', 'error');
+    return;
+  }
+
+  try {
+    const res = await api(`/projects/${projectId}/weekly-updates`, {
+      method: 'POST',
+      body: JSON.stringify({ week_number, lifecycle_stage, progress_pct, work_done, description, planned_work })
+    });
+    if (res.success) {
+      showToast('Weekly progress update submitted!', 'success');
+      const o = document.getElementById('wu-modal-overlay');
+      if (o) o.remove();
+      loadProjectDetail(projectId);
+    }
+  } catch (e) {}
+}
+
+async function submitWeeklyFeedback(projectId, updateId) {
+  const feedback = document.getElementById('wf-feedback').value.trim();
+  if (!feedback) {
+    showToast('Feedback text is required', 'error');
+    return;
+  }
+
+  try {
+    const res = await api(`/projects/${projectId}/weekly-updates/${updateId}/feedback`, {
+      method: 'PUT',
+      body: JSON.stringify({ feedback })
+    });
+    if (res.success) {
+      showToast('Supervisor feedback saved!', 'success');
+      const o = document.getElementById('wf-modal-overlay');
+      if (o) o.remove();
+      loadProjectDetail(projectId);
+    }
+  } catch (e) {}
+}
+
+function showRecordMeetingModal(projectId) {
+  if (state.currentUser && state.currentUser.role !== 'student') {
+    showToast('Only students can record meeting logs. Supervisors verify recorded meetings.', 'warning');
+    return;
+  }
+
+  const existing = document.getElementById('rm-modal-overlay');
+  if (existing) existing.remove();
+
+  const today = new Date().toISOString().split('T')[0];
+  const overlay = document.createElement('div');
+  overlay.id = 'rm-modal-overlay';
+  overlay.className = 'fixed inset-0 z-[150] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4';
+
+  overlay.innerHTML = `
+  <div class="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto no-scrollbar scrollbar-none fade-in">
+    <div class="p-5 border-b border-gray-100 flex items-center justify-between bg-emerald-50 rounded-t-3xl">
+      <div>
+        <span class="text-xs font-bold text-emerald-700 flex items-center gap-1.5"><i class="fas fa-calendar-alt"></i> Meeting Verification System</span>
+        <h3 class="font-bold text-base text-gray-900 mt-0.5">Record Supervisor Meeting</h3>
+      </div>
+      <button onclick="document.getElementById('rm-modal-overlay').remove()" class="w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-200 flex items-center justify-center">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+
+    <div class="p-5 space-y-4">
+      <div class="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-xs text-amber-800 flex items-start gap-2">
+        <i class="fas fa-exclamation-triangle text-amber-500 mt-0.5 shrink-0"></i>
+        <span><strong>Verification Rule:</strong> Submitting this meeting record sets status to <strong>Pending Verification</strong>. It will NOT increment your meeting count until your supervisor verifies it.</span>
+      </div>
+
+      <div class="space-y-3 text-xs">
+        <div>
+          <label class="block font-bold text-gray-700 mb-1">Meeting Date <span class="text-rose-500">*</span></label>
+          <input id="rm-date" type="date" value="${today}" class="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none" />
+        </div>
+
+        <div>
+          <label class="block font-bold text-gray-700 mb-1">Meeting Subject / Title <span class="text-rose-500">*</span></label>
+          <input id="rm-title" type="text" placeholder="e.g., Module 2 Progress Review & Architecture Discussion" class="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none" />
+        </div>
+
+        <div>
+          <label class="block font-bold text-gray-700 mb-1">Key Discussion Points</label>
+          <textarea id="rm-discussion" rows="2" placeholder="Topics discussed during the supervisor meeting..." class="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none resize-none"></textarea>
+        </div>
+
+        <div>
+          <label class="block font-bold text-gray-700 mb-1">Work / Progress Discussed</label>
+          <textarea id="rm-work" rows="2" placeholder="Summary of completed features shown to supervisor..." class="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none resize-none"></textarea>
+        </div>
+
+        <div>
+          <label class="block font-bold text-gray-700 mb-1">Tasks / Action Items Assigned</label>
+          <textarea id="rm-action" rows="2" placeholder="Action items given by supervisor for next iteration..." class="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none resize-none"></textarea>
+        </div>
+
+        <div>
+          <label class="block font-bold text-gray-700 mb-1">Next Meeting Plan</label>
+          <input id="rm-next" type="text" placeholder="Target date or focus area for next meeting..." class="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none" />
+        </div>
+      </div>
+    </div>
+
+    <div class="px-5 pb-5 flex gap-2 justify-end">
+      <button onclick="document.getElementById('rm-modal-overlay').remove()" class="border border-gray-200 text-gray-600 font-bold px-4 py-2 rounded-xl text-xs hover:bg-gray-50 transition-all">
+        Cancel
+      </button>
+      <button onclick="submitRecordMeeting('${projectId}')" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-5 py-2 rounded-xl text-xs shadow-md transition-all flex items-center gap-1.5">
+        <i class="fas fa-paper-plane"></i> Submit Record for Verification
+      </button>
+    </div>
+  </div>`;
+
+  document.body.appendChild(overlay);
+}
+
+async function submitRecordMeeting(projectId) {
+  const dateInput = document.getElementById('rm-date');
+  const titleInput = document.getElementById('rm-title');
+  const discInput = document.getElementById('rm-discussion');
+  const workInput = document.getElementById('rm-work');
+  const actionInput = document.getElementById('rm-action');
+  const nextInput = document.getElementById('rm-next');
+
+  const meeting_date = dateInput ? dateInput.value : '';
+  const title = titleInput ? titleInput.value.trim() : '';
+  const discussion = discInput ? discInput.value.trim() : '';
+  const work_discussed = workInput ? workInput.value.trim() : '';
+  const action_items = actionInput ? actionInput.value.trim() : '';
+  const next_meeting = nextInput ? nextInput.value.trim() : '';
+
+  if (!title) {
+    showToast('Meeting title is required', 'warning');
+    if (titleInput) titleInput.focus();
+    return;
+  }
+
+  try {
+    const res = await api(`/projects/${projectId}/meetings`, {
+      method: 'POST',
+      body: JSON.stringify({
+        meeting_date,
+        title,
+        discussion,
+        work_discussed,
+        action_items,
+        next_meeting,
+        verification_status: 'pending'
+      })
+    });
+
+    if (res.success) {
+      showToast(res.message || 'Meeting record submitted for supervisor verification!', 'success');
+      const o = document.getElementById('rm-modal-overlay');
+      if (o) o.remove();
+      loadProjectDetail(projectId);
+    }
+  } catch (e) {
+    console.error('Error submitting meeting record:', e);
+  }
+}
+
+function showVerifyMeetingModal(projectId, meetingId) {
+  const p = state.selectedProject;
+  const meetings = p ? (p.meetings || []) : [];
+  const meeting = meetings.find(m => m.id === meetingId) || {};
+
+  const existing = document.getElementById('vm-modal-overlay');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'vm-modal-overlay';
+  overlay.className = 'fixed inset-0 z-[150] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4';
+
+  overlay.innerHTML = `
+  <div class="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto no-scrollbar scrollbar-none fade-in">
+    <div class="p-5 border-b border-gray-100 flex items-center justify-between bg-indigo-50 rounded-t-3xl">
+      <div>
+        <span class="text-xs font-bold text-indigo-700 flex items-center gap-1.5"><i class="fas fa-user-check"></i> Supervisor Verification</span>
+        <h3 class="font-bold text-base text-gray-900 mt-0.5">Verify Student Meeting Record</h3>
+      </div>
+      <button onclick="document.getElementById('vm-modal-overlay').remove()" class="w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-200 flex items-center justify-center">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+
+    <div class="p-5 space-y-4 text-xs">
+      <div class="bg-gray-50 rounded-2xl p-4 space-y-2 border border-gray-200">
+        <div class="flex justify-between items-center"><span class="text-gray-400 font-semibold">Student:</span><span class="font-bold text-gray-900">${escapeHtml(meeting.student_name || 'Student')}</span></div>
+        <div class="flex justify-between items-center"><span class="text-gray-400 font-semibold">Meeting Date:</span><span class="font-bold font-mono text-gray-900">${escapeHtml(meeting.meeting_date || meeting.scheduled_at || 'N/A')}</span></div>
+        <div class="flex justify-between items-center"><span class="text-gray-400 font-semibold">Title:</span><span class="font-bold text-gray-900">${escapeHtml(meeting.title || 'Supervisor Meeting')}</span></div>
+      </div>
+
+      ${meeting.discussion ? `<div><span class="font-bold text-gray-700 block mb-0.5">Discussion Summary:</span><p class="p-2.5 bg-gray-50 rounded-xl border border-gray-200 text-gray-800">${escapeHtml(meeting.discussion)}</p></div>` : ''}
+      ${meeting.work_discussed ? `<div><span class="font-bold text-gray-700 block mb-0.5">Work Discussed:</span><p class="p-2.5 bg-gray-50 rounded-xl border border-gray-200 text-gray-800">${escapeHtml(meeting.work_discussed)}</p></div>` : ''}
+      ${meeting.action_items ? `<div><span class="font-bold text-gray-700 block mb-0.5">Tasks / Action Items:</span><p class="p-2.5 bg-gray-50 rounded-xl border border-gray-200 text-gray-800">${escapeHtml(meeting.action_items)}</p></div>` : ''}
+
+      <div>
+        <label class="block font-bold text-gray-700 mb-1">Supervisor Evaluation & Feedback Notes</label>
+        <textarea id="vm-feedback" rows="3" placeholder="Enter supervisor feedback or verification comments..." class="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none">${escapeHtml(meeting.supervisor_feedback || '')}</textarea>
+      </div>
+    </div>
+
+    <div class="px-5 pb-5 flex flex-wrap gap-2 justify-end border-t pt-4">
+      <button onclick="submitVerifyMeeting('${projectId}', '${meetingId}', 'reject')" class="bg-rose-600 hover:bg-rose-700 text-white font-bold px-3.5 py-2 rounded-xl text-xs transition-all">
+        Reject Meeting
+      </button>
+      <button onclick="submitVerifyMeeting('${projectId}', '${meetingId}', 'request_changes')" class="bg-purple-600 hover:bg-purple-700 text-white font-bold px-3.5 py-2 rounded-xl text-xs transition-all">
+        Request Changes
+      </button>
+      <button onclick="submitVerifyMeeting('${projectId}', '${meetingId}', 'verify')" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-5 py-2 rounded-xl text-xs shadow-md transition-all flex items-center gap-1.5">
+        <i class="fas fa-check-circle"></i> Verify &amp; Increment Count
+      </button>
+    </div>
+  </div>`;
+
+  document.body.appendChild(overlay);
+}
+
+async function submitVerifyMeeting(projectId, meetingId, action) {
+  const feedbackInput = document.getElementById('vm-feedback');
+  const feedback = feedbackInput ? feedbackInput.value.trim() : '';
+
+  try {
+    const res = await api(`/projects/${projectId}/meetings/${meetingId}/verify`, {
+      method: 'PUT',
+      body: JSON.stringify({ action, feedback })
+    });
+    if (res.success) {
+      showToast(res.message || 'Meeting status updated!', 'success');
+      const o = document.getElementById('vm-modal-overlay');
+      if (o) o.remove();
+      loadProjectDetail(projectId);
+    }
+  } catch (e) {}
+}
+
+function showStudentEvaluationModal(projectId) {
+  const p = state.selectedProject;
+  const members = p ? (p.members || []) : [];
+
+  const existing = document.getElementById('eval-modal-overlay');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'eval-modal-overlay';
+  overlay.className = 'fixed inset-0 z-[150] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4';
+
+  overlay.innerHTML = `
+  <div class="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto no-scrollbar scrollbar-none fade-in">
+    <div class="p-5 border-b border-gray-100 flex items-center justify-between bg-amber-50 rounded-t-3xl">
+      <div>
+        <span class="text-xs font-bold text-amber-700 flex items-center gap-1.5"><i class="fas fa-award"></i> Performance Evaluation</span>
+        <h3 class="font-bold text-base text-gray-900 mt-0.5">Evaluate Project Student</h3>
+      </div>
+      <button onclick="document.getElementById('eval-modal-overlay').remove()" class="w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-200 flex items-center justify-center">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+
+    <div class="p-5 space-y-4 text-xs">
+      <div>
+        <label class="block font-bold text-gray-700 mb-1">Select Student <span class="text-rose-500">*</span></label>
+        <select id="eval-student" class="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none">
+          ${members.map(m => `<option value="${m.id}">${escapeHtml(m.name)} (${m.email})</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block font-bold text-gray-700 mb-1">Performance Grade</label>
+          <select id="eval-grade" class="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none">
+            <option value="A+">A+ (Outstanding)</option>
+            <option value="A" selected>A (Excellent)</option>
+            <option value="B+">B+ (Very Good)</option>
+            <option value="B">B (Good)</option>
+            <option value="C">C (Satisfactory)</option>
+            <option value="D">D (Needs Improvement)</option>
+            <option value="F">F (Fail)</option>
+          </select>
+        </div>
+        <div>
+          <label class="block font-bold text-gray-700 mb-1">Score (0-100)</label>
+          <input id="eval-score" type="number" min="0" max="100" value="85" class="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none" />
+        </div>
+      </div>
+
+      <div>
+        <label class="block font-bold text-gray-700 mb-1">Evaluation Comments &amp; Feedback <span class="text-rose-500">*</span></label>
+        <textarea id="eval-comments" rows="4" placeholder="Write comprehensive evaluation comments regarding student progress, technical skills, and teamwork..." class="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none resize-none"></textarea>
+      </div>
+    </div>
+
+    <div class="px-5 pb-5 flex gap-2 justify-end">
+      <button onclick="document.getElementById('eval-modal-overlay').remove()" class="border border-gray-200 text-gray-600 font-bold px-4 py-2 rounded-xl text-xs hover:bg-gray-50 transition-all">
+        Cancel
+      </button>
+      <button onclick="submitStudentEvaluation('${projectId}')" class="bg-amber-600 hover:bg-amber-700 text-white font-bold px-5 py-2 rounded-xl text-xs shadow-md transition-all flex items-center gap-1.5">
+        <i class="fas fa-save"></i> Save Evaluation
+      </button>
+    </div>
+  </div>`;
+
+  document.body.appendChild(overlay);
+}
+
+async function submitStudentEvaluation(projectId) {
+  const studentSelect = document.getElementById('eval-student');
+  const gradeSelect = document.getElementById('eval-grade');
+  const scoreInput = document.getElementById('eval-score');
+  const commentsInput = document.getElementById('eval-comments');
+
+  const student_id = studentSelect ? studentSelect.value : '';
+  const grade = gradeSelect ? gradeSelect.value : 'A';
+  const score = scoreInput ? parseInt(scoreInput.value, 10) : 85;
+  const comments = commentsInput ? commentsInput.value.trim() : '';
+
+  if (!student_id) {
+    showToast('Please select a student', 'warning');
+    return;
+  }
+
+  if (!comments) {
+    showToast('Evaluation comments are required', 'warning');
+    if (commentsInput) commentsInput.focus();
+    return;
+  }
+
+  try {
+    const res = await api(`/projects/${projectId}/evaluations`, {
+      method: 'POST',
+      body: JSON.stringify({ student_id, grade, score, comments })
+    });
+
+    if (res.success) {
+      showToast(res.message || 'Student evaluation saved successfully!', 'success');
+      const o = document.getElementById('eval-modal-overlay');
+      if (o) o.remove();
+      loadProjectDetail(projectId);
+    }
+  } catch (e) {
+    console.error('Error saving evaluation:', e);
+  }
+}
+
+async function showStudentProfileModal(studentId) {
+  try {
+    const res = await api(`/users/${studentId}/student-profile`);
+    if (!res || !res.data) {
+      showToast('Could not load student profile', 'error');
+      return;
+    }
+    const data = res.data;
+    const student = data.student || {};
+    const project = data.project || {};
+    const group = data.group || {};
+    const meetings = data.meetings || [];
+    const verifiedCount = data.verified_meetings_count || 0;
+    const evaluations = data.evaluations || [];
+    const updates = data.weekly_updates || [];
+
+    const existing = document.getElementById('student-profile-overlay');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'student-profile-overlay';
+    overlay.className = 'fixed inset-0 z-[150] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4';
+
+    overlay.innerHTML = `
+    <div class="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto no-scrollbar scrollbar-none fade-in">
+      <div class="p-6 border-b border-gray-100 flex items-center justify-between bg-gradient-to-r from-slate-900 to-indigo-900 text-white rounded-t-3xl">
+        <div class="flex items-center gap-3">
+          <div class="w-12 h-12 rounded-2xl bg-indigo-600 flex items-center justify-center text-lg font-bold text-white shadow-md">
+            ${(student.name || 'S').charAt(0)}
+          </div>
+          <div>
+            <h3 class="font-bold text-lg text-white">${escapeHtml(student.name)}</h3>
+            <p class="text-xs text-indigo-200 font-mono">${escapeHtml(student.email)} &bull; ID: ${escapeHtml(student.student_id_num || 'N/A')}</p>
+          </div>
+        </div>
+        <button onclick="document.getElementById('student-profile-overlay').remove()" class="w-8 h-8 rounded-lg text-indigo-200 hover:bg-white/10 flex items-center justify-center">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+
+      <div class="p-6 space-y-6">
+        <!-- Prominent Verified Meetings Counter Banner -->
+        <div class="bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-2xl p-4 flex items-center justify-between shadow-lg">
+          <div class="space-y-0.5">
+            <span class="text-[10px] uppercase tracking-wider font-bold text-emerald-200">Official Database Record</span>
+            <h4 class="text-xl font-extrabold flex items-center gap-2">
+              <i class="fas fa-check-circle text-emerald-300"></i> ${verifiedCount} Verified Meetings
+            </h4>
+            <p class="text-[11px] text-emerald-100">Calculated strictly from database verification status. Students cannot manually edit count.</p>
+          </div>
+          <div class="w-12 h-12 bg-white/15 rounded-2xl flex items-center justify-center text-2xl font-bold text-white">
+            <i class="fas fa-calendar-check"></i>
+          </div>
+        </div>
+
+        <!-- Student Academic & Project Info -->
+        <div class="grid grid-cols-2 gap-3 bg-gray-50 rounded-2xl p-4 text-xs border border-gray-200">
+          <div><span class="text-gray-400 font-semibold block">Program &amp; Shift:</span><span class="font-bold text-gray-900">${student.program || 'BS'} (${student.shift || 'Morning'})</span></div>
+          <div><span class="text-gray-400 font-semibold block">Department:</span><span class="font-bold text-gray-900">${escapeHtml(student.department || 'Computer Science')}</span></div>
+          <div><span class="text-gray-400 font-semibold block">FYP Group:</span><span class="font-bold text-gray-900">${escapeHtml(group.group_name || 'Unassigned')}</span></div>
+          <div><span class="text-gray-400 font-semibold block">Project Title:</span><span class="font-bold text-gray-900 truncate">${escapeHtml(project.title || 'Unassigned')}</span></div>
+        </div>
+
+        <!-- Meetings & Verification Logs -->
+        <div class="border-t pt-4 space-y-3">
+          <h4 class="font-bold text-xs text-gray-800 flex items-center justify-between">
+            <span><i class="fas fa-history text-emerald-600 mr-1.5"></i> Meeting History &amp; Status</span>
+            <span class="text-[10px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-bold">${meetings.length} Total Logs</span>
+          </h4>
+          <div class="space-y-2 max-h-48 overflow-y-auto">
+            ${meetings.length ? meetings.map(m => {
+              const statusColors = {
+                verified: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+                pending: 'bg-amber-100 text-amber-800 border-amber-200',
+                revision_requested: 'bg-purple-100 text-purple-800 border-purple-200',
+                rejected: 'bg-rose-100 text-rose-800 border-rose-200'
+              };
+              const st = m.verification_status || 'pending';
+              return `
+                <div class="p-3 rounded-xl border border-gray-200 bg-gray-50 flex items-center justify-between text-xs">
+                  <div>
+                    <span class="font-bold text-gray-900 block">${escapeHtml(m.title || 'Supervisor Meeting')}</span>
+                    <span class="text-[10px] text-gray-500 font-mono"><i class="far fa-calendar-alt mr-1"></i>${m.meeting_date || m.scheduled_at}</span>
+                  </div>
+                  <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase ${statusColors[st] || 'bg-gray-100'}">${st.replace('_', ' ')}</span>
+                </div>
+              `;
+            }).join('') : '<p class="text-xs text-gray-400">No meeting logs found.</p>'}
+          </div>
+        </div>
+
+        <!-- Supervisor Evaluations -->
+        <div class="border-t pt-4 space-y-3">
+          <h4 class="font-bold text-xs text-gray-800 flex items-center gap-1.5">
+            <i class="fas fa-award text-amber-500"></i> Supervisor Evaluations &amp; Grades
+          </h4>
+          <div class="space-y-2 max-h-44 overflow-y-auto">
+            ${evaluations.length ? evaluations.map(ev => `
+              <div class="p-3 rounded-xl border border-amber-200 bg-amber-50/40 text-xs space-y-1">
+                <div class="flex justify-between items-center">
+                  <span class="font-bold text-amber-900">${ev.grade ? 'Grade: ' + ev.grade : ''} ${ev.score !== null ? '(' + ev.score + '/100)' : ''}</span>
+                  <span class="text-[10px] text-gray-400 font-mono">${new Date(ev.created_at).toLocaleDateString()}</span>
+                </div>
+                <p class="text-gray-700">${escapeHtml(ev.comments)}</p>
+                <p class="text-[10px] text-gray-400 italic">By: ${escapeHtml(ev.supervisor_name || 'Supervisor')}</p>
+              </div>
+            `).join('') : '<p class="text-xs text-gray-400">No evaluations recorded yet.</p>'}
+          </div>
+        </div>
+      </div>
+    </div>`;
+
+    document.body.appendChild(overlay);
+  } catch (e) {
+    showToast('Failed to load profile', 'error');
+  }
+}
+
+// Register Global Window Handles
+window.navigateToApply = navigateToApply;
+window.updateApplyDepartmentOptions = updateApplyDepartmentOptions;
+window.setApplyStep = setApplyStep;
+window.addApplyMember = addApplyMember;
+window.removeApplyMember = removeApplyMember;
+window.handleApplicationPdfPick = handleApplicationPdfPick;
+window.submitPublicApplication = submitPublicApplication;
+window.loadApplications = loadApplications;
+window.renderApplicationsList = renderApplicationsList;
+window.refreshApplicationsGrid = refreshApplicationsGrid;
+window.startApplicationsPolling = startApplicationsPolling;
+window.stopApplicationsPolling = stopApplicationsPolling;
+window.showReviewApplicationModal = showReviewApplicationModal;
+window.updateApplicationStatus = updateApplicationStatus;
+window.showApproveWithPasswordDialog = showApproveWithPasswordDialog;
+window.submitApproveWithPassword = submitApproveWithPassword;
+window.submitWeeklyUpdate = submitWeeklyUpdate;
+window.submitWeeklyFeedback = submitWeeklyFeedback;
+window.submitRecordMeeting = submitRecordMeeting;
+window.submitVerifyMeeting = submitVerifyMeeting;
+window.submitStudentEvaluation = submitStudentEvaluation;
+window.showRecordMeetingModal = showRecordMeetingModal;
+window.showVerifyMeetingModal = showVerifyMeetingModal;
+window.showStudentEvaluationModal = showStudentEvaluationModal;
+window.showStudentProfileModal = showStudentProfileModal;
 
 // Initial Application Render
 render();

@@ -34,13 +34,30 @@ projectRoutes.get('/:id', async (c) => {
   ).bind(id).first();
   if (!project) return c.json({ success: false, error: 'Project not found' }, 404);
 
-  // Also fetch members and meetings
+  // Also fetch members, meetings, verified count, weekly updates, and evaluations
   const members = await c.env.DB.prepare(
-    `SELECT u.id, u.name, u.email, u.role FROM project_members pm JOIN users u ON pm.user_id = u.id WHERE pm.project_id = ?`
+    `SELECT u.id, u.name, u.email, u.role, u.student_id_num FROM project_members pm JOIN users u ON pm.user_id = u.id WHERE pm.project_id = ?`
   ).bind(id).all();
 
   const meetings = await c.env.DB.prepare(
-    `SELECT * FROM meetings WHERE project_id = ? ORDER BY scheduled_at DESC LIMIT 10`
+    `SELECT m.*, u.name as student_name, s.name as supervisor_name
+     FROM meetings m
+     LEFT JOIN users u ON m.student_id = u.id
+     LEFT JOIN users s ON m.supervisor_id = s.id
+     WHERE m.project_id = ? ORDER BY m.meeting_date DESC, m.created_at DESC`
+  ).bind(id).all();
+
+  const verifiedRes = await c.env.DB.prepare(
+    `SELECT COUNT(*) as count FROM meetings WHERE project_id = ? AND verification_status = 'verified'`
+  ).bind(id).first();
+  const verifiedMeetingsCount = (verifiedRes?.count as number) || 0;
+
+  const weeklyUpdates = await c.env.DB.prepare(
+    `SELECT w.*, u.name as student_name FROM weekly_updates w JOIN users u ON w.student_id = u.id WHERE w.project_id = ? ORDER BY w.week_number DESC, w.created_at DESC`
+  ).bind(id).all();
+
+  const evaluations = await c.env.DB.prepare(
+    `SELECT e.*, s.name as supervisor_name, u.name as student_name FROM evaluations e JOIN users s ON e.supervisor_id = s.id JOIN users u ON e.student_id = u.id WHERE e.project_id = ? ORDER BY e.created_at DESC`
   ).bind(id).all();
 
   const links = await c.env.DB.prepare(
@@ -71,6 +88,9 @@ projectRoutes.get('/:id', async (c) => {
       ...project,
       members: members.results,
       meetings: meetings.results,
+      verifiedMeetingsCount,
+      weeklyUpdates: weeklyUpdates.results,
+      evaluations: evaluations.results,
       links: links.results,
       media: mediaWithFeedback,
       overallFeedback,
@@ -276,19 +296,268 @@ projectRoutes.post('/:id/feedback', async (c) => {
   return c.json({ success: true, message: 'Feedback posted!' }, 201);
 });
 
-// POST /api/projects/:id/meetings
-projectRoutes.post('/:id/meetings', async (c) => {
+// ==========================================
+// WEEKLY PROJECT UPDATES
+// ==========================================
+
+const LIFECYCLE_STAGES = [
+  'Requirements Gathering',
+  'Requirements Analysis',
+  'Feasibility Analysis',
+  'Planning',
+  'System Design',
+  'Architecture Design',
+  'UI/UX Design',
+  'Database Design',
+  'Development',
+  'Integration',
+  'Testing',
+  'Debugging',
+  'Deployment',
+  'Documentation',
+  'Maintenance',
+  'Research',
+  'Presentation Preparation',
+  'Other'
+];
+
+// GET /api/projects/:id/weekly-updates — fetch project weekly updates
+projectRoutes.get('/:id/weekly-updates', async (c) => {
   const projectId = c.req.param('id');
+  const result = await c.env.DB.prepare(
+    `SELECT w.*, u.name as student_name, u.email as student_email
+     FROM weekly_updates w JOIN users u ON w.student_id = u.id
+     WHERE w.project_id = ? ORDER BY w.week_number DESC, w.created_at DESC`
+  ).bind(projectId).all();
+
+  return c.json({ success: true, data: result.results });
+});
+
+// POST /api/projects/:id/weekly-updates — submit weekly project update
+projectRoutes.post('/:id/weekly-updates', async (c) => {
+  const projectId = c.req.param('id');
+  const userId = c.req.header('X-User-Id') || 'demo-user';
+  const userRole = c.req.header('X-User-Role') || 'student';
+
+  if (userRole !== 'student') {
+    return c.json({ success: false, error: 'Only students can submit weekly project updates' }, 403);
+  }
+
+  const member = await c.env.DB.prepare('SELECT id FROM project_members WHERE project_id = ? AND user_id = ?').bind(projectId, userId).first();
+  if (!member) {
+    return c.json({ success: false, error: 'You can only submit updates for your assigned project' }, 403);
+  }
+
   const body = await c.req.json();
+  const { week_number, work_done, progress_pct, description, planned_work, lifecycle_stage } = body;
+
+  if (!week_number || isNaN(Number(week_number))) {
+    return c.json({ success: false, error: 'Week number is required and must be a number' }, 400);
+  }
+
+  if (!work_done || !work_done.trim()) {
+    return c.json({ success: false, error: 'Work done summary is required' }, 400);
+  }
+
+  if (!description || !description.trim()) {
+    return c.json({ success: false, error: 'Short description is required' }, 400);
+  }
+
+  if (!planned_work || !planned_work.trim()) {
+    return c.json({ success: false, error: 'Next planned work is required' }, 400);
+  }
+
+  if (!lifecycle_stage || !LIFECYCLE_STAGES.includes(lifecycle_stage)) {
+    return c.json({
+      success: false,
+      error: `Invalid lifecycle stage. Must be one of: ${LIFECYCLE_STAGES.join(', ')}`
+    }, 400);
+  }
+
   const id = generateId();
+  const progressVal = progress_pct !== undefined ? Math.min(100, Math.max(0, Number(progress_pct))) : 0;
 
   await c.env.DB.prepare(
-    `INSERT INTO meetings (id, project_id, title, scheduled_at, status)
-     VALUES (?, ?, ?, ?, ?)`
-  ).bind(id, projectId, body.title || 'Supervisor Meeting', body.scheduled_at || null, body.status || 'scheduled').run();
+    `INSERT INTO weekly_updates (id, project_id, student_id, week_number, work_done, progress_pct, description, planned_work, lifecycle_stage)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    id, projectId, userId, Number(week_number), work_done.trim(), progressVal, description.trim(), planned_work.trim(), lifecycle_stage
+  ).run();
+
+  // Optionally update project overall progress if progressVal > project.progress
+  if (progressVal > 0) {
+    await c.env.DB.prepare(
+      `UPDATE projects SET progress = MAX(progress, ?), updated_at = datetime('now') WHERE id = ?`
+    ).bind(progressVal, projectId).run();
+  }
+
+  const updateRecord = await c.env.DB.prepare('SELECT * FROM weekly_updates WHERE id = ?').bind(id).first();
+  return c.json({ success: true, data: updateRecord, message: 'Weekly update submitted successfully!' }, 201);
+});
+
+// PUT /api/projects/:id/weekly-updates/:updateId/feedback — supervisor/coordinator adds feedback to weekly update
+projectRoutes.put('/:id/weekly-updates/:updateId/feedback', async (c) => {
+  const userRole = c.req.header('X-User-Role') || 'student';
+  if (userRole !== 'supervisor' && userRole !== 'coordinator') {
+    return c.json({ success: false, error: 'Only supervisors and coordinators can provide feedback on weekly updates' }, 403);
+  }
+
+  const updateId = c.req.param('updateId');
+  const body = await c.req.json();
+  const feedback = (body.feedback || '').trim();
+
+  if (!feedback) {
+    return c.json({ success: false, error: 'Feedback text is required' }, 400);
+  }
+
+  await c.env.DB.prepare(
+    `UPDATE weekly_updates SET supervisor_feedback = ?, updated_at = datetime('now') WHERE id = ?`
+  ).bind(feedback, updateId).run();
+
+  return c.json({ success: true, message: 'Feedback added to weekly update.' });
+});
+
+// ==========================================
+// MEETING VERIFICATION WORKFLOW
+// ==========================================
+
+// POST /api/projects/:id/meetings — Student adds a meeting record (PENDING VERIFICATION)
+projectRoutes.post('/:id/meetings', async (c) => {
+  const projectId = c.req.param('id');
+  const userId = c.req.header('X-User-Id') || 'demo-user';
+  const userRole = c.req.header('X-User-Role') || 'student';
+  
+  if (userRole !== 'student') {
+    return c.json({ success: false, error: 'Only students can submit meeting records for supervisor verification' }, 403);
+  }
+
+  const body = await c.req.json();
+  const project = await c.env.DB.prepare('SELECT supervisor_id FROM projects WHERE id = ?').bind(projectId).first();
+  const supervisorId = body.supervisor_id || (project ? project.supervisor_id : null);
+
+  const id = generateId();
+  const meetingDate = body.meeting_date || body.scheduled_at || new Date().toISOString().split('T')[0];
+
+  // Note: verification_status is set to 'pending'. This DOES NOT increment verified meeting count.
+  await c.env.DB.prepare(
+    `INSERT INTO meetings (
+      id, project_id, student_id, supervisor_id, title, scheduled_at, meeting_date,
+      discussion, work_discussed, action_items, next_meeting_plan, verification_status, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'completed')`
+  ).bind(
+    id,
+    projectId,
+    userId,
+    supervisorId,
+    body.title || `Supervisor Meeting (${meetingDate})`,
+    meetingDate,
+    meetingDate,
+    body.discussion || body.notes || null,
+    body.work_discussed || null,
+    body.action_items || null,
+    body.next_meeting_plan || null
+  ).run();
 
   const meeting = await c.env.DB.prepare('SELECT * FROM meetings WHERE id = ?').bind(id).first();
-  return c.json({ success: true, data: meeting }, 201);
+  return c.json({
+    success: true,
+    data: meeting,
+    message: 'Meeting submitted! Pending verification by supervisor.'
+  }, 201);
+});
+
+// GET /api/projects/:id/meetings — Fetch all meetings with verification status
+projectRoutes.get('/:id/meetings', async (c) => {
+  const projectId = c.req.param('id');
+  const result = await c.env.DB.prepare(
+    `SELECT m.*, u.name as student_name, s.name as supervisor_name
+     FROM meetings m
+     LEFT JOIN users u ON m.student_id = u.id
+     LEFT JOIN users s ON m.supervisor_id = s.id
+     WHERE m.project_id = ? ORDER BY m.meeting_date DESC, m.created_at DESC`
+  ).bind(projectId).all();
+
+  return c.json({ success: true, data: result.results });
+});
+
+// PUT /api/projects/:id/meetings/:meetingId/verify — Supervisor verifies / rejects / requests changes for a meeting
+projectRoutes.put('/:id/meetings/:meetingId/verify', async (c) => {
+  const userRole = c.req.header('X-User-Role') || 'student';
+  if (userRole !== 'supervisor' && userRole !== 'coordinator') {
+    return c.json({ success: false, error: 'Only supervisors and coordinators can verify meetings' }, 403);
+  }
+
+  const meetingId = c.req.param('meetingId');
+  const body = await c.req.json();
+  const { action, feedback } = body;
+
+  if (!['verify', 'reject', 'request_changes'].includes(action)) {
+    return c.json({ success: false, error: 'Action must be verify, reject, or request_changes' }, 400);
+  }
+
+  const newStatus = action === 'verify' ? 'verified' : action === 'reject' ? 'rejected' : 'revision_requested';
+
+  await c.env.DB.prepare(
+    `UPDATE meetings SET
+      verification_status = ?,
+      supervisor_feedback = ?,
+      verified_at = datetime('now')
+     WHERE id = ?`
+  ).bind(newStatus, feedback || null, meetingId).run();
+
+  return c.json({
+    success: true,
+    message: `Meeting status updated to ${newStatus}. ${newStatus === 'verified' ? 'Verified meeting count updated.' : ''}`
+  });
+});
+
+// ==========================================
+// STUDENT EVALUATIONS
+// ==========================================
+
+// POST /api/projects/:id/evaluations — Supervisor submits student evaluation
+projectRoutes.post('/:id/evaluations', async (c) => {
+  const userRole = c.req.header('X-User-Role') || 'student';
+  const supervisorId = c.req.header('X-User-Id') || 'demo-user';
+
+  if (userRole !== 'supervisor' && userRole !== 'coordinator') {
+    return c.json({ success: false, error: 'Only supervisors and coordinators can submit student evaluations' }, 403);
+  }
+
+  const projectId = c.req.param('id');
+  const body = await c.req.json();
+  const { student_id, grade, score, comments } = body;
+
+  if (!student_id) {
+    return c.json({ success: false, error: 'Student ID is required for evaluation' }, 400);
+  }
+
+  if (!comments || !comments.trim()) {
+    return c.json({ success: false, error: 'Evaluation comments/feedback are required' }, 400);
+  }
+
+  const id = generateId();
+  await c.env.DB.prepare(
+    `INSERT INTO evaluations (id, project_id, student_id, supervisor_id, grade, score, comments)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).bind(id, projectId, student_id, supervisorId, grade || null, score ? Number(score) : null, comments.trim()).run();
+
+  const evalRecord = await c.env.DB.prepare('SELECT * FROM evaluations WHERE id = ?').bind(id).first();
+  return c.json({ success: true, data: evalRecord, message: 'Student evaluation submitted successfully.' }, 201);
+});
+
+// GET /api/projects/:id/evaluations — List evaluations for a project
+projectRoutes.get('/:id/evaluations', async (c) => {
+  const projectId = c.req.param('id');
+  const result = await c.env.DB.prepare(
+    `SELECT e.*, s.name as supervisor_name, u.name as student_name
+     FROM evaluations e
+     JOIN users s ON e.supervisor_id = s.id
+     JOIN users u ON e.student_id = u.id
+     WHERE e.project_id = ? ORDER BY e.created_at DESC`
+  ).bind(projectId).all();
+
+  return c.json({ success: true, data: result.results });
 });
 
 export { projectRoutes };
