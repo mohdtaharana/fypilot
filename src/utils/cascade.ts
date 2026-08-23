@@ -1,3 +1,17 @@
+// Minimal D1 type shims (avoids a hard dependency on @cloudflare/workers-types).
+interface D1PreparedStatement {
+  bind(...values: unknown[]): D1PreparedStatement;
+  all<T = Record<string, unknown>>(): Promise<{ results: T[] }>;
+  run(): Promise<{ success: boolean }>;
+  first<T = Record<string, unknown>>(col?: string): Promise<T | null>;
+  raw<T = unknown[]>(): Promise<T[]>;
+}
+
+interface D1Database {
+  prepare(query: string): D1PreparedStatement;
+  batch<T = unknown>(statements: D1PreparedStatement[]): Promise<{ results: T[] }[]>;
+  exec(query: string): Promise<{ count: number; duration: number }>;
+}
 // Shared DB cascade helpers for deleting projects/groups (and everything referencing them).
 
 // Delete projects and all child records (weekly_updates, evaluations, tasks, feedback, media, links, meetings, members).

@@ -1,3 +1,18 @@
+// Minimal D1 type shims (avoids a hard dependency on @cloudflare/workers-types).
+interface D1PreparedStatement {
+  bind(...values: unknown[]): D1PreparedStatement;
+  all<T = Record<string, unknown>>(): Promise<{ results: T[] }>;
+  run(): Promise<{ success: boolean }>;
+  first<T = Record<string, unknown>>(col?: string): Promise<T | null>;
+  raw<T = unknown[]>(): Promise<T[]>;
+}
+
+interface D1Database {
+  prepare(query: string): D1PreparedStatement;
+  batch<T = unknown>(statements: D1PreparedStatement[]): Promise<{ results: T[] }[]>;
+  exec(query: string): Promise<{ count: number; duration: number }>;
+}
+
 import { Hono } from 'hono';
 import type { Env } from '../ai/ai.types';
 import { generateId } from '../ai/ai.utils';
@@ -14,10 +29,22 @@ type ChatUser = {
   avatar: string | null;
 };
 
+// Verify that X-User-Id belongs to an actual active user in the DB.
+// Returns the DB-verified user record, or null if invalid/inactive.
+async function resolveIdentity(db: D1Database, userId: string): Promise<ChatUser | null> {
+  if (!userId || userId === 'guest') return null;
+  const user = await db.prepare(
+    `SELECT id, email, name, role, department, avatar FROM users
+     WHERE id = ? AND (status = 'active' OR status IS NULL)`
+  ).bind(userId).first() as ChatUser | null;
+  return user || null;
+}
+
 // Role-based chat permission rules
 function canChat(fromRole: string, toRole: string): boolean {
   if (!fromRole || !toRole) return false;
-  if (fromRole === 'coordinator') return true;
+  // Coordinator can chat with supervisors and students (not other coordinators)
+  if (fromRole === 'coordinator') return toRole === 'supervisor' || toRole === 'student';
   if (fromRole === 'supervisor') return toRole === 'student' || toRole === 'coordinator';
   if (fromRole === 'student') return toRole === 'supervisor' || toRole === 'coordinator';
   return false;
@@ -108,8 +135,10 @@ const MESSAGE_SELECT = `
 
 // GET /api/chats — list conversations for the current user
 chatRoutes.get('/', async (c) => {
-  const userId = c.req.header('X-User-Id') || '';
-  if (!userId) return c.json({ success: false, error: 'Not authenticated' }, 401);
+  const rawId = c.req.header('X-User-Id') || '';
+  const me = await resolveIdentity(c.env.DB, rawId);
+  if (!me) return c.json({ success: false, error: 'Not authenticated' }, 401);
+  const userId = me.id;
 
   const result = await c.env.DB.prepare(
     `SELECT c.id as chat_id,
@@ -165,9 +194,10 @@ chatRoutes.get('/', async (c) => {
 
 // POST /api/chats — create or fetch an existing 1:1 chat
 chatRoutes.post('/', async (c) => {
-  const userId = c.req.header('X-User-Id') || '';
-  const userRole = c.req.header('X-User-Role') || '';
-  if (!userId) return c.json({ success: false, error: 'Not authenticated' }, 401);
+  const rawId = c.req.header('X-User-Id') || '';
+  const me = await resolveIdentity(c.env.DB, rawId);
+  if (!me) return c.json({ success: false, error: 'Not authenticated' }, 401);
+  const userId = me.id;
 
   const body = await c.req.json();
   const otherUserId = body.other_user_id;
@@ -184,7 +214,8 @@ chatRoutes.post('/', async (c) => {
   ).bind(otherUserId).first() as ChatUser | null;
   if (!peer) return c.json({ success: false, error: 'User not found' }, 404);
 
-  if (!canChat(userRole, peer.role)) {
+  // Use DB-verified role (me.role), not the client-sent header
+  if (!canChat(me.role, peer.role)) {
     return c.json({ success: false, error: 'You are not allowed to chat with this user' }, 403);
   }
 
@@ -268,9 +299,11 @@ presenceRoutes.post('/', async (c) => {
 
 // GET /api/chats/:id/messages — fetch messages (+ mark peer messages read when opened)
 chatRoutes.get('/:id/messages', async (c) => {
-  const userId = c.req.header('X-User-Id') || '';
+  const rawId = c.req.header('X-User-Id') || '';
+  const me = await resolveIdentity(c.env.DB, rawId);
+  if (!me) return c.json({ success: false, error: 'Not authenticated' }, 401);
+  const userId = me.id;
   const chatId = c.req.param('id');
-  if (!userId) return c.json({ success: false, error: 'Not authenticated' }, 401);
 
   const chat = await c.env.DB.prepare('SELECT * FROM chats WHERE id = ?').bind(chatId).first();
   if (!chat) return c.json({ success: false, error: 'Chat not found' }, 404);
@@ -320,10 +353,11 @@ chatRoutes.get('/:id/messages', async (c) => {
 
 // POST /api/chats/:id/messages — send a message (text / image / voice / file)
 chatRoutes.post('/:id/messages', async (c) => {
-  const userId = c.req.header('X-User-Id') || '';
-  const userRole = c.req.header('X-User-Role') || '';
+  const rawId = c.req.header('X-User-Id') || '';
+  const me = await resolveIdentity(c.env.DB, rawId);
+  if (!me) return c.json({ success: false, error: 'Not authenticated' }, 401);
+  const userId = me.id;
   const chatId = c.req.param('id');
-  if (!userId) return c.json({ success: false, error: 'Not authenticated' }, 401);
 
   const chat = await c.env.DB.prepare('SELECT * FROM chats WHERE id = ?').bind(chatId).first();
   if (!chat) return c.json({ success: false, error: 'Chat not found' }, 404);
@@ -394,9 +428,11 @@ chatRoutes.post('/:id/messages', async (c) => {
 
 // POST /api/chats/:id/read — mark all peer messages as read
 chatRoutes.post('/:id/read', async (c) => {
-  const userId = c.req.header('X-User-Id') || '';
+  const rawId = c.req.header('X-User-Id') || '';
+  const me = await resolveIdentity(c.env.DB, rawId);
+  if (!me) return c.json({ success: false, error: 'Not authenticated' }, 401);
+  const userId = me.id;
   const chatId = c.req.param('id');
-  if (!userId) return c.json({ success: false, error: 'Not authenticated' }, 401);
 
   const chat = await c.env.DB.prepare('SELECT * FROM chats WHERE id = ?').bind(chatId).first();
   if (!chat) return c.json({ success: false, error: 'Chat not found' }, 404);
@@ -414,10 +450,12 @@ chatRoutes.post('/:id/read', async (c) => {
 
 // POST /api/messages/:id/pin — pin a message (both participants can pin)
 chatRoutes.post('/:chatId/messages/:messageId/pin', async (c) => {
-  const userId = c.req.header('X-User-Id') || '';
+  const rawId = c.req.header('X-User-Id') || '';
+  const me = await resolveIdentity(c.env.DB, rawId);
+  if (!me) return c.json({ success: false, error: 'Not authenticated' }, 401);
+  const userId = me.id;
   const chatId = c.req.param('chatId');
   const messageId = c.req.param('messageId');
-  if (!userId) return c.json({ success: false, error: 'Not authenticated' }, 401);
 
   const chat = await c.env.DB.prepare('SELECT * FROM chats WHERE id = ?').bind(chatId).first();
   if (!chat) return c.json({ success: false, error: 'Chat not found' }, 404);
@@ -432,10 +470,12 @@ chatRoutes.post('/:chatId/messages/:messageId/pin', async (c) => {
 
 // POST /api/messages/:id/unpin — unpin a message
 chatRoutes.post('/:chatId/messages/:messageId/unpin', async (c) => {
-  const userId = c.req.header('X-User-Id') || '';
+  const rawId = c.req.header('X-User-Id') || '';
+  const me = await resolveIdentity(c.env.DB, rawId);
+  if (!me) return c.json({ success: false, error: 'Not authenticated' }, 401);
+  const userId = me.id;
   const chatId = c.req.param('chatId');
   const messageId = c.req.param('messageId');
-  if (!userId) return c.json({ success: false, error: 'Not authenticated' }, 401);
 
   const chat = await c.env.DB.prepare('SELECT * FROM chats WHERE id = ?').bind(chatId).first();
   if (!chat) return c.json({ success: false, error: 'Chat not found' }, 404);
@@ -450,10 +490,12 @@ chatRoutes.post('/:chatId/messages/:messageId/unpin', async (c) => {
 
 // POST /api/messages/:id/edit — edit an own text message
 chatRoutes.post('/:chatId/messages/:messageId/edit', async (c) => {
-  const userId = c.req.header('X-User-Id') || '';
+  const rawId = c.req.header('X-User-Id') || '';
+  const me = await resolveIdentity(c.env.DB, rawId);
+  if (!me) return c.json({ success: false, error: 'Not authenticated' }, 401);
+  const userId = me.id;
   const chatId = c.req.param('chatId');
   const messageId = c.req.param('messageId');
-  if (!userId) return c.json({ success: false, error: 'Not authenticated' }, 401);
 
   const body = await c.req.json();
   const content = typeof body.content === 'string' ? body.content.trim() : '';
@@ -477,10 +519,12 @@ chatRoutes.post('/:chatId/messages/:messageId/edit', async (c) => {
 
 // DELETE /api/messages/:id — delete an own message (hard delete for everyone)
 chatRoutes.delete('/:chatId/messages/:messageId', async (c) => {
-  const userId = c.req.header('X-User-Id') || '';
+  const rawId = c.req.header('X-User-Id') || '';
+  const me = await resolveIdentity(c.env.DB, rawId);
+  if (!me) return c.json({ success: false, error: 'Not authenticated' }, 401);
+  const userId = me.id;
   const chatId = c.req.param('chatId');
   const messageId = c.req.param('messageId');
-  if (!userId) return c.json({ success: false, error: 'Not authenticated' }, 401);
 
   const msg = await c.env.DB.prepare(
     'SELECT * FROM messages WHERE id = ? AND chat_id = ?'

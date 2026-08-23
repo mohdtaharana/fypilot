@@ -35,20 +35,20 @@ userRoutes.post('/login', async (c) => {
       }, 403);
     }
 
-    // If user has an individual password, check it
+    // Check password — custom password if set, or role default password for seeded accounts
     if (user.password) {
       if (user.password !== password) {
         return c.json({ success: false, error: 'Incorrect password. Please try again.' }, 401);
       }
     } else {
-      // No individual password — fall back to shared role password (demo accounts)
-      const sharedPasswords: Record<string, string> = {
+      // Default passwords for seeded accounts
+      const defaultPasswords: Record<string, string> = {
         coordinator: 'TahaRana@123',
         supervisor: 'supervisor123',
         student: 'student123'
       };
-      const expected = sharedPasswords[user.role as string];
-      if (!expected || password !== expected) {
+      const expectedPassword = defaultPasswords[user.role as string];
+      if (!expectedPassword || password !== expectedPassword) {
         return c.json({ success: false, error: 'Incorrect password. Please try again.' }, 401);
       }
     }
@@ -58,89 +58,17 @@ userRoutes.post('/login', async (c) => {
     return c.json({ success: true, data: { user: safeUser, message: 'Login successful' } });
   }
 
-  // No account found with this email — try demo quick-login (no email registration)
-  // Only allow if they use the exact demo credentials
-  const sharedPasswords: Record<string, string> = {
-    coordinator: 'TahaRana@123',
-    supervisor: 'supervisor123',
-    student: 'student123'
-  };
-
-  // Find which role this password matches
-  let matchedRole: string | null = null;
-  for (const [r, p] of Object.entries(sharedPasswords)) {
-    if (p === password) { matchedRole = r; break; }
-  }
-
-  if (!matchedRole) {
-    return c.json({ success: false, error: 'No account found with this email address.' }, 404);
-  }
-
-  // Return first active demo user of that role
-  const demoUser = await c.env.DB.prepare(
-    "SELECT id, email, name, role, department, status FROM users WHERE role = ? AND (status = 'active' OR status IS NULL) ORDER BY id ASC LIMIT 1"
-  ).bind(matchedRole).first() as Record<string, unknown> | null;
-
-  const finalUser = demoUser || {
-    id: `${matchedRole}-1`,
-    name: `${matchedRole.charAt(0).toUpperCase() + matchedRole.slice(1)} User`,
-    role: matchedRole,
-    department: 'Computer Science'
-  };
-
-  return c.json({ success: true, data: { user: finalUser, message: 'Login successful' } });
+  // No account found
+  return c.json({ success: false, error: 'No account found with this email address.' }, 404);
 });
 
-// POST /api/users/register — Self registration for students & supervisors
+// POST /api/users/register — Self-registration is DISABLED.
+// Students apply via /apply; supervisors are registered by coordinators.
 userRoutes.post('/register', async (c) => {
-  try {
-    const body = await c.req.json();
-    const { name, email, role, department, expertise, max_students, password } = body;
-
-    if (!name || !email || !role) {
-      return c.json({ success: false, error: 'Name, email, and role are required' }, 400);
-    }
-
-    if (!password || password.length < 6) {
-      return c.json({ success: false, error: 'Password must be at least 6 characters' }, 400);
-    }
-
-    if (role === 'coordinator') {
-      return c.json({ success: false, error: 'Coordinator accounts cannot self-register' }, 403);
-    }
-
-    // Check if email already exists
-    const existing = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
-    if (existing) {
-      return c.json({ success: false, error: 'An account with this email already exists' }, 409);
-    }
-
-    const id = generateId();
-
-    await c.env.DB.prepare(
-      `INSERT INTO users (id, email, name, role, department, expertise, max_students, password, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`
-    ).bind(
-      id, email, name, role,
-      department || 'Computer Science',
-      expertise ? JSON.stringify(expertise) : null,
-      max_students || 8,
-      password
-    ).run();
-
-    const user = await c.env.DB.prepare('SELECT id, email, name, role, department, status FROM users WHERE id = ?').bind(id).first();
-    await notifyRole(c.env.DB, 'coordinator', {
-      type: 'approval',
-      title: `New ${role} registration pending approval`,
-      body: `${name} (${email}) has registered as a ${role} and is waiting for approval.`,
-      link_view: 'dashboard',
-      ref_id: id,
-    });
-    return c.json({ success: true, data: user, message: 'Registration submitted! Awaiting coordinator approval.' }, 201);
-  } catch (err: any) {
-    console.error('Registration Error:', err);
-    return c.json({ success: false, error: err?.message || 'Registration failed' }, 500);
-  }
+  return c.json({
+    success: false,
+    error: 'Self-registration is disabled. Students should use the /apply form. Supervisors are registered by the coordinator.'
+  }, 403);
 });
 
 // GET /api/users/pending — Get all pending approval users (coordinator only)
@@ -194,6 +122,46 @@ userRoutes.put('/:id/reject', async (c) => {
     });
   }
   return c.json({ success: true, message: 'User registration rejected' });
+});
+
+// GET /api/users/chattable — returns only users the authenticated caller is allowed to chat with.
+// Role is derived from the DB (never trusted from the header) so it cannot be spoofed.
+userRoutes.get('/chattable', async (c) => {
+  const callerId = c.req.header('X-User-Id') || '';
+  if (!callerId || callerId === 'guest') {
+    return c.json({ success: false, error: 'Not authenticated' }, 401);
+  }
+
+  const caller = await c.env.DB.prepare(
+    `SELECT id, role FROM users WHERE id = ? AND (status = 'active' OR status IS NULL)`
+  ).bind(callerId).first() as { id: string; role: string } | null;
+
+  if (!caller) return c.json({ success: false, error: 'Not authenticated' }, 401);
+
+  // Determine which roles this user may chat with
+  let allowedRoles: string[] = [];
+  if (caller.role === 'coordinator') {
+    allowedRoles = ['supervisor', 'student'];
+  } else if (caller.role === 'supervisor') {
+    allowedRoles = ['student', 'coordinator'];
+  } else if (caller.role === 'student') {
+    allowedRoles = ['supervisor', 'coordinator'];
+  }
+
+  if (!allowedRoles.length) {
+    return c.json({ success: true, data: [] });
+  }
+
+  const placeholders = allowedRoles.map(() => '?').join(', ');
+  const result = await c.env.DB.prepare(
+    `SELECT id, email, name, role, department, avatar FROM users
+     WHERE (status = 'active' OR status IS NULL)
+       AND role IN (${placeholders})
+       AND id != ?
+     ORDER BY name`
+  ).bind(...allowedRoles, caller.id).all();
+
+  return c.json({ success: true, data: result.results });
 });
 
 // GET /api/users — only active users (by default)

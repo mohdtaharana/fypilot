@@ -158,36 +158,6 @@ const state = {
   chatMsgTimer: null,
 };
 
-// Demo User Credentials & Accounts
-const DEMO_ACCOUNTS = {
-  coordinator: {
-    role: 'coordinator',
-    label: 'Coordinator',
-    icon: 'fa-user-shield',
-    defaultEmail: 'admin@university.edu',
-    passwordHint: 'TahaRana@123',
-    name: 'Dr. Admin Coordinator',
-    desc: 'Full system management, proposal approvals & health overrides'
-  },
-  supervisor: {
-    role: 'supervisor',
-    label: 'Supervisor',
-    icon: 'fa-user-tie',
-    defaultEmail: 'ahmed.khan@university.edu',
-    passwordHint: 'supervisor123',
-    name: 'Dr. Ahmed Khan',
-    desc: 'Project oversight, proposal approvals & health overrides'
-  },
-  student: {
-    role: 'student',
-    label: 'Student',
-    icon: 'fa-user-graduate',
-    defaultEmail: 'ali.hassan@student.edu',
-    passwordHint: 'student123',
-    name: 'Ali Hassan',
-    desc: 'Proposal submission & project tracking'
-  }
-};
 
 // Chart.js Instance Tracker
 const chartInstances = {};
@@ -307,10 +277,6 @@ function render() {
 
 // ===== Authentication UI =====
 function renderLoginScreen() {
-  const activeRole = state.selectedLoginRole;
-  const accountInfo = DEMO_ACCOUNTS[activeRole];
-  const isRegisterMode = state.loginMode === 'register';
-
   return `
   <div class="min-h-screen bg-gradient-to-br from-slate-900 via-fypilot-900 to-indigo-950 flex items-center justify-center p-4 sm:p-6 relative overflow-hidden">
     <!-- Ambient Blur Background Elements -->
@@ -336,105 +302,18 @@ function renderLoginScreen() {
         </button>
       </div>
 
-      <!-- Login / Register Tab Toggle -->
-      <div class="flex bg-gray-100 p-1 rounded-xl gap-1 mb-6">
-        <button onclick="setLoginMode('login')" class="flex-1 py-2 rounded-lg text-xs font-bold transition-all ${!isRegisterMode ? 'bg-white text-fypilot-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}">
-          <i class="fas fa-sign-in-alt mr-1.5"></i> Sign In
-        </button>
-        <button onclick="setLoginMode('register')" class="flex-1 py-2 rounded-lg text-xs font-bold transition-all ${isRegisterMode ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'}">
-          <i class="fas fa-user-plus mr-1.5"></i> Register
-        </button>
-      </div>
+      <!-- Login / Register Tab Toggle removed: self-registration is disabled -->
 
-      ${isRegisterMode ? `
-      <!-- REGISTER FORM -->
-      <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-5 text-xs text-amber-800 flex items-start gap-2">
-        <i class="fas fa-info-circle text-amber-500 mt-0.5 shrink-0"></i>
-        <span>Your account will be <strong>pending coordinator approval</strong> after registration. You can login once approved.</span>
-      </div>
-
-      <!-- Role Select for Registration -->
-      <div class="mb-4">
-        <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">I am registering as</label>
-        <div class="grid grid-cols-2 gap-2 bg-gray-100 p-1.5 rounded-xl border border-gray-200">
-          <button type="button" onclick="selectLoginRole('student')" 
-                  class="flex items-center justify-center gap-2 py-2 px-2 rounded-lg text-xs font-semibold transition-all ${activeRole === 'student' ? 'bg-white text-emerald-700 shadow-sm border border-gray-200' : 'text-gray-600 hover:text-gray-900'}">
-            <i class="fas fa-user-graduate ${activeRole === 'student' ? 'text-emerald-600' : 'text-gray-400'}"></i> Student
-          </button>
-          <button type="button" onclick="selectLoginRole('supervisor')"
-                  class="flex items-center justify-center gap-2 py-2 px-2 rounded-lg text-xs font-semibold transition-all ${activeRole === 'supervisor' ? 'bg-white text-blue-700 shadow-sm border border-gray-200' : 'text-gray-600 hover:text-gray-900'}">
-            <i class="fas fa-user-tie ${activeRole === 'supervisor' ? 'text-blue-600' : 'text-gray-400'}"></i> Supervisor
-          </button>
-        </div>
-      </div>
-
-      <form id="register-form" class="space-y-3">
-        <div>
-          <label class="block text-xs font-semibold text-gray-700 mb-1">Full Name *</label>
-          <div class="relative">
-            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400"><i class="fas fa-user text-sm"></i></div>
-            <input type="text" id="reg-name" required placeholder="${activeRole === 'supervisor' ? 'e.g. Dr. Ali Hassan' : 'e.g. Muhammad Ali'}"
-                   class="w-full pl-9 pr-3 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
-          </div>
-        </div>
-
-        <div>
-          <label class="block text-xs font-semibold text-gray-700 mb-1">University Email *</label>
-          <div class="relative">
-            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400"><i class="fas fa-envelope text-sm"></i></div>
-            <input type="email" id="reg-email" required placeholder="${activeRole === 'supervisor' ? 'name@university.edu' : 'rollno@student.edu'}"
-                   class="w-full pl-9 pr-3 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
-          </div>
-        </div>
-
-        <div>
-          <label class="block text-xs font-semibold text-gray-700 mb-1">Department</label>
-          <input type="text" id="reg-department" value="Computer Science"
-                 class="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
-        </div>
-
-        <div>
-          <label class="block text-xs font-semibold text-gray-700 mb-1">Create Password *</label>
-          <div class="relative">
-            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400"><i class="fas fa-lock text-sm"></i></div>
-            <input type="password" id="reg-password" required minlength="6" placeholder="Choose a password (min 6 chars)"
-                   class="w-full pl-9 pr-3 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
-          </div>
-        </div>
-
-        ${activeRole === 'supervisor' ? `
-        <div>
-          <label class="block text-xs font-semibold text-gray-700 mb-1">Areas of Expertise <span class="text-gray-400 font-normal">(comma-separated)</span></label>
-          <input type="text" id="reg-expertise" placeholder="e.g. Machine Learning, IoT, Cybersecurity"
-                 class="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
-        </div>
-        <div>
-          <label class="block text-xs font-semibold text-gray-700 mb-1">Max Student Capacity</label>
-          <input type="number" id="reg-capacity" value="5" min="1" max="15"
-                 class="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
-        </div>
-        ` : ''}
-
-        <button type="submit" id="btn-register"
-                class="w-full py-3 px-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-semibold rounded-xl text-sm shadow-lg shadow-indigo-500/25 transition-all duration-200 flex items-center justify-center gap-2 mt-2">
-          <i class="fas fa-paper-plane text-xs"></i>
-          <span>Submit Registration Request</span>
-        </button>
-      </form>
-
-      <p class="text-center text-xs text-gray-500 mt-4">Already have an account? <button onclick="setLoginMode('login')" class="text-fypilot-600 font-semibold hover:underline">Sign In</button></p>
-      ` : `
       <!-- LOGIN FORM -->
-      <!-- Login Form -->
       <form id="login-form" class="space-y-4">
         <div>
-          <label class="block text-xs font-semibold text-gray-700 mb-1">Email Address</label>
+          <label class="block text-xs font-semibold text-gray-700 mb-1">Email / Student ID</label>
           <div class="relative">
             <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
               <i class="fas fa-envelope text-sm"></i>
             </div>
-            <input type="email" id="login-email" required 
-                   value="${state.loginPrefillEmail || accountInfo.defaultEmail}"
+            <input type="text" id="login-email" required 
+                   value="${state.loginPrefillEmail || ''}"
                    class="w-full pl-9 pr-3 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-fypilot-500 focus:bg-white transition-all" 
                    placeholder="your@email.edu" />
           </div>
@@ -447,9 +326,8 @@ function renderLoginScreen() {
               <i class="fas fa-lock text-sm"></i>
             </div>
             <input type="password" id="login-password" required 
-                   value="${state.loginPrefillEmail ? '' : accountInfo.passwordHint}"
                    class="w-full pl-9 pr-10 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-fypilot-500 focus:bg-white transition-all" 
-                   placeholder="Enter your account password" />
+                   placeholder="Enter your password" />
             <button type="button" onclick="togglePasswordVisibility()" class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600">
               <i class="fas fa-eye text-sm" id="toggle-pwd-icon"></i>
             </button>
@@ -463,59 +341,13 @@ function renderLoginScreen() {
         </button>
       </form>
 
-      <!-- Quick Demo Login Pills -->
-      <div class="mt-5 pt-4 border-t border-gray-100">
-        <p class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2 text-center">Quick Demo Login</p>
-        <div class="grid grid-cols-3 gap-2 text-xs">
-          <button onclick="quickLogin('coordinator')" class="flex flex-col items-center gap-1 p-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 transition-all">
-            <i class="fas fa-user-shield text-indigo-500"></i>
-            <span class="font-semibold text-indigo-700 text-[11px]">Coordinator</span>
-          </button>
-          <button onclick="quickLogin('supervisor')" class="flex flex-col items-center gap-1 p-2 rounded-xl bg-fypilot-50 hover:bg-fypilot-100 border border-fypilot-100 transition-all">
-            <i class="fas fa-user-tie text-fypilot-500"></i>
-            <span class="font-semibold text-fypilot-700 text-[11px]">Supervisor</span>
-          </button>
-          <button onclick="quickLogin('student')" class="flex flex-col items-center gap-1 p-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-100 transition-all">
-            <i class="fas fa-user-graduate text-emerald-500"></i>
-            <span class="font-semibold text-emerald-700 text-[11px]">Student</span>
-          </button>
-        </div>
-        <p class="text-center text-xs text-gray-500 mt-4">New user? <button onclick="setLoginMode('register')" class="text-indigo-600 font-semibold hover:underline">Register here</button></p>
-      </div>
-      `}
+      <p class="text-center text-[11px] text-gray-400 mt-5"><i class="fas fa-info-circle mr-1"></i>Contact the coordinator if you need access.</p>
 
     </div>
   </div>`;
 }
 
 
-function selectLoginRole(roleKey) {
-  state.selectedLoginRole = roleKey;
-  render();
-}
-
-function quickLogin(roleKey) {
-  // One-click demo login: fill credentials and submit
-  state.selectedLoginRole = roleKey;
-  state.loginPrefillEmail = '';
-  render();
-  // Small delay to let DOM update, then fill and submit
-  setTimeout(() => {
-    const emailEl = document.getElementById('login-email');
-    const pwdEl = document.getElementById('login-password');
-    const btn = document.getElementById('btn-login');
-    if (emailEl) emailEl.value = DEMO_ACCOUNTS[roleKey].defaultEmail;
-    if (pwdEl) pwdEl.value = DEMO_ACCOUNTS[roleKey].passwordHint;
-    if (btn) btn.click();
-  }, 50);
-}
-
-function setLoginMode(mode, prefillEmail = '') {
-  state.loginMode = mode;
-  if (mode === 'register') state.selectedLoginRole = 'student';
-  if (prefillEmail) state.loginPrefillEmail = prefillEmail;
-  render();
-}
 
 function togglePasswordVisibility() {
   const pwdInput = document.getElementById('login-password');
@@ -578,66 +410,6 @@ function attachLoginEventListeners() {
     }
   });
 }
-
-  // Register form
-  const regForm = document.getElementById('register-form');
-  if (regForm) {
-    regForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const btn = document.getElementById('btn-register');
-      const name = document.getElementById('reg-name')?.value.trim();
-      const email = document.getElementById('reg-email')?.value.trim();
-      const password = document.getElementById('reg-password')?.value;
-      const department = document.getElementById('reg-department')?.value.trim() || 'Computer Science';
-      const expertiseEl = document.getElementById('reg-expertise');
-      const capacityEl = document.getElementById('reg-capacity');
-      const role = state.selectedLoginRole;
-
-      const expertise = expertiseEl?.value.trim()
-        ? expertiseEl.value.split(',').map(s => s.trim()).filter(Boolean)
-        : [];
-
-      if (!name || !email) {
-        showToast('Name and email are required', 'error');
-        return;
-      }
-
-      if (!password || password.length < 6) {
-        showToast('Password must be at least 6 characters long', 'error');
-        return;
-      }
-
-      btn.disabled = true;
-      btn.innerHTML = `<i class="fas fa-spinner fa-spin text-sm"></i> <span>Submitting...</span>`;
-
-      try {
-        const res = await api('/users/register', {
-          method: 'POST',
-          body: JSON.stringify({
-            name, email, password, role, department,
-            expertise,
-            max_students: capacityEl ? parseInt(capacityEl.value) : 8
-          })
-        });
-
-        if (res.success) {
-          showToast('Registration submitted! Awaiting coordinator approval. You can login once approved.', 'success');
-          state.loginPrefillEmail = email;
-          state.selectedLoginRole = role;
-          setLoginMode('login');
-        } else {
-          showToast(res.error || 'Registration failed', 'error');
-        }
-      } catch (err) {
-        // handled by api helper
-      } finally {
-        if (btn) {
-          btn.disabled = false;
-          btn.innerHTML = `<i class="fas fa-paper-plane text-xs"></i> <span>Submit Registration Request</span>`;
-        }
-      }
-    });
-  }
 }
 
 async function approveUser(userId) {
@@ -723,6 +495,11 @@ function logout() {
   state.isAuthenticated = false;
   state.currentUser = null;
   state.mobileMenuOpen = false;
+  // Clear cached chat user list so it's re-fetched with fresh permissions on next login
+  state.chatNewUsers = [];
+  state.chats = [];
+  state.activeChat = null;
+  state.chatMessages = [];
   localStorage.removeItem('fypilot_user');
   showToast('Logged out successfully', 'info');
   render();
@@ -5074,8 +4851,9 @@ function openPinnedChatMessages() {
 async function openNewChatModal() {
   if (!state.chatNewUsers.length) {
     try {
-      const res = await api('/users');
-      state.chatNewUsers = (res.data || []).filter(u => u.id !== state.currentUser.id && canChatWith(state.currentUser.role, u.role));
+      const res = await api('/users/chattable');
+      // Backend already filters to only users this caller can chat with (role verified in DB)
+      state.chatNewUsers = (res.data || []).filter(u => u.id !== state.currentUser.id);
     } catch (e) { return; }
   }
   renderNewChatModal();
@@ -5322,9 +5100,7 @@ window.addEventListener('focus', () => {
 
 // Make globally available
 window.navigate = navigate;
-window.selectLoginRole = selectLoginRole;
-window.quickLogin = quickLogin;
-window.setLoginMode = setLoginMode;
+
 window.togglePasswordVisibility = togglePasswordVisibility;
 window.logout = logout;
 window.toggleMobileMenu = toggleMobileMenu;
