@@ -1,9 +1,12 @@
 import { Hono } from 'hono';
 import type { Env } from '../ai/ai.types';
 import { generateId } from '../ai/ai.utils';
+import { logAuditEvent } from '../audit/audit.routes';
 
 type Variables = { userId: string; userRole: string };
 const projectRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
+const EXECUTIVE_ROLES = new Set(['coordinator', 'hod', 'dean']);
+const isExecutiveRole = (role?: string | null) => !!role && EXECUTIVE_ROLES.has(role);
 
 // GET /api/projects
 projectRoutes.get('/', async (c) => {
@@ -132,6 +135,12 @@ projectRoutes.post('/', async (c) => {
   }
 
   const project = await c.env.DB.prepare('SELECT * FROM projects WHERE id = ?').bind(id).first();
+  await logAuditEvent(c.env.DB, c.req.header('X-User-Id') || 'system', c.req.header('X-User-Role') || 'system', 'project_created', {
+    entityType: 'project',
+    entityId: String(id),
+    details: `Project ${body.title || 'Untitled'} created`,
+    metadata: { project_id: id, title: body.title || null, proposal_id: body.proposal_id || null }
+  });
   return c.json({ success: true, data: project }, 201);
 });
 
@@ -162,8 +171,8 @@ projectRoutes.put('/:id', async (c) => {
     if (!member) {
       return c.json({ success: false, error: 'You can only update progress on a project you belong to' }, 403);
     }
-  } else if (userRole !== 'coordinator' && userRole !== 'supervisor') {
-    return c.json({ success: false, error: 'Only coordinators, supervisors and project members can update projects' }, 403);
+  } else if (!isExecutiveRole(userRole) && userRole !== 'supervisor') {
+    return c.json({ success: false, error: 'Only coordinators, HOD, Dean, supervisors and project members can update projects' }, 403);
   }
 
   const fields: string[] = [];
@@ -186,6 +195,12 @@ projectRoutes.put('/:id', async (c) => {
   const updated = await c.env.DB.prepare(
     `SELECT p.*, u.name as supervisor_name FROM projects p LEFT JOIN users u ON p.supervisor_id = u.id WHERE p.id = ?`
   ).bind(id).first();
+  await logAuditEvent(c.env.DB, c.req.header('X-User-Id') || 'system', c.req.header('X-User-Role') || 'system', 'project_updated', {
+    entityType: 'project',
+    entityId: String(id),
+    details: `Project ${updated?.title || id} updated`,
+    metadata: { project_id: id, changed_fields: fields.map((field) => field.replace(' = ?', '').trim()) }
+  });
   return c.json({ success: true, data: updated });
 });
 
@@ -208,6 +223,12 @@ projectRoutes.post('/:id/links', async (c) => {
   const id = generateId();
   await c.env.DB.prepare('INSERT INTO project_links (id, project_id, label, url) VALUES (?, ?, ?, ?)')
     .bind(id, projectId, label, url).run();
+  await logAuditEvent(c.env.DB, userId, userRole, 'project_link_created', {
+    entityType: 'project_link',
+    entityId: String(id),
+    details: `Project link created for project ${projectId}`,
+    metadata: { project_id: projectId, link_id: id, label, url }
+  });
   return c.json({ success: true, message: 'Link added!' }, 201);
 });
 
@@ -224,6 +245,12 @@ projectRoutes.delete('/:id/links/:linkId', async (c) => {
   if (!member) return c.json({ success: false, error: 'You can only remove links from a project you belong to' }, 403);
 
   await c.env.DB.prepare('DELETE FROM project_links WHERE id = ? AND project_id = ?').bind(linkId, projectId).run();
+  await logAuditEvent(c.env.DB, userId, userRole, 'project_link_deleted', {
+    entityType: 'project_link',
+    entityId: String(linkId),
+    details: `Project link deleted from project ${projectId}`,
+    metadata: { project_id: projectId, link_id: linkId }
+  });
   return c.json({ success: true, message: 'Link removed.' });
 });
 
@@ -251,6 +278,12 @@ projectRoutes.post('/:id/media', async (c) => {
   const id = generateId();
   await c.env.DB.prepare('INSERT INTO project_media (id, project_id, uploaded_by, caption, data) VALUES (?, ?, ?, ?, ?)')
     .bind(id, projectId, userId, (body.caption || '').trim() || null, data).run();
+  await logAuditEvent(c.env.DB, userId, userRole, 'project_media_created', {
+    entityType: 'project_media',
+    entityId: String(id),
+    details: `Project media uploaded for project ${projectId}`,
+    metadata: { project_id: projectId, media_id: id, caption: (body.caption || '').trim() || null }
+  });
   return c.json({ success: true, message: 'Screenshot uploaded!' }, 201);
 });
 
@@ -268,6 +301,12 @@ projectRoutes.delete('/:id/media/:mediaId', async (c) => {
 
   await c.env.DB.prepare('DELETE FROM project_feedback WHERE media_id = ?').bind(mediaId).run();
   await c.env.DB.prepare('DELETE FROM project_media WHERE id = ? AND project_id = ?').bind(mediaId, projectId).run();
+  await logAuditEvent(c.env.DB, userId, userRole, 'project_media_deleted', {
+    entityType: 'project_media',
+    entityId: String(mediaId),
+    details: `Project media deleted from project ${projectId}`,
+    metadata: { project_id: projectId, media_id: mediaId }
+  });
   return c.json({ success: true, message: 'Screenshot removed.' });
 });
 
@@ -276,8 +315,8 @@ projectRoutes.post('/:id/feedback', async (c) => {
   const projectId = c.req.param('id');
   const userId = c.req.header('X-User-Id') || 'demo-user';
   const userRole = c.req.header('X-User-Role') || 'student';
-  if (userRole !== 'coordinator' && userRole !== 'supervisor') {
-    return c.json({ success: false, error: 'Only coordinators and supervisors can give feedback' }, 403);
+  if (!isExecutiveRole(userRole) && userRole !== 'supervisor') {
+    return c.json({ success: false, error: 'Only coordinators, HOD, Dean, and supervisors can give feedback' }, 403);
   }
 
   const body = await c.req.json();
@@ -293,6 +332,12 @@ projectRoutes.post('/:id/feedback', async (c) => {
   const id = generateId();
   await c.env.DB.prepare('INSERT INTO project_feedback (id, project_id, media_id, user_id, message) VALUES (?, ?, ?, ?, ?)')
     .bind(id, projectId, mediaId, userId, message).run();
+  await logAuditEvent(c.env.DB, userId, userRole, 'project_feedback_created', {
+    entityType: 'project_feedback',
+    entityId: String(id),
+    details: `Feedback added to project ${projectId}`,
+    metadata: { project_id: projectId, media_id: mediaId, message }
+  });
   return c.json({ success: true, message: 'Feedback posted!' }, 201);
 });
 
@@ -383,6 +428,12 @@ projectRoutes.post('/:id/weekly-updates', async (c) => {
   ).bind(
     id, projectId, userId, Number(week_number), work_done.trim(), progressVal, description.trim(), planned_work.trim(), lifecycle_stage
   ).run();
+  await logAuditEvent(c.env.DB, userId, userRole, 'weekly_update_created', {
+    entityType: 'weekly_update',
+    entityId: String(id),
+    details: `Weekly update submitted for project ${projectId}`,
+    metadata: { project_id: projectId, week_number: Number(week_number), progress_pct: progressVal }
+  });
 
   // Optionally update project overall progress if progressVal > project.progress
   if (progressVal > 0) {
@@ -398,8 +449,8 @@ projectRoutes.post('/:id/weekly-updates', async (c) => {
 // PUT /api/projects/:id/weekly-updates/:updateId/feedback — supervisor/coordinator adds feedback to weekly update
 projectRoutes.put('/:id/weekly-updates/:updateId/feedback', async (c) => {
   const userRole = c.req.header('X-User-Role') || 'student';
-  if (userRole !== 'supervisor' && userRole !== 'coordinator') {
-    return c.json({ success: false, error: 'Only supervisors and coordinators can provide feedback on weekly updates' }, 403);
+  if (userRole !== 'supervisor' && !isExecutiveRole(userRole)) {
+    return c.json({ success: false, error: 'Only supervisors and executive roles can provide feedback on weekly updates' }, 403);
   }
 
   const updateId = c.req.param('updateId');
@@ -413,6 +464,12 @@ projectRoutes.put('/:id/weekly-updates/:updateId/feedback', async (c) => {
   await c.env.DB.prepare(
     `UPDATE weekly_updates SET supervisor_feedback = ?, updated_at = datetime('now') WHERE id = ?`
   ).bind(feedback, updateId).run();
+  await logAuditEvent(c.env.DB, c.req.header('X-User-Id') || 'system', userRole, 'weekly_update_feedback_added', {
+    entityType: 'weekly_update',
+    entityId: String(updateId),
+    details: `Supervisor feedback added to weekly update ${updateId}`,
+    metadata: { project_id: c.req.param('id'), feedback }
+  });
 
   return c.json({ success: true, message: 'Feedback added to weekly update.' });
 });
@@ -459,6 +516,12 @@ projectRoutes.post('/:id/meetings', async (c) => {
   ).run();
 
   const meeting = await c.env.DB.prepare('SELECT * FROM meetings WHERE id = ?').bind(id).first();
+  await logAuditEvent(c.env.DB, userId, userRole, 'meeting_created', {
+    entityType: 'meeting',
+    entityId: String(id),
+    details: `Meeting record created for project ${projectId}`,
+    metadata: { project_id: projectId, meeting_id: id, meeting_date: meetingDate }
+  });
   return c.json({
     success: true,
     data: meeting,
@@ -483,8 +546,8 @@ projectRoutes.get('/:id/meetings', async (c) => {
 // PUT /api/projects/:id/meetings/:meetingId/verify — Supervisor verifies / rejects / requests changes for a meeting
 projectRoutes.put('/:id/meetings/:meetingId/verify', async (c) => {
   const userRole = c.req.header('X-User-Role') || 'student';
-  if (userRole !== 'supervisor' && userRole !== 'coordinator') {
-    return c.json({ success: false, error: 'Only supervisors and coordinators can verify meetings' }, 403);
+  if (userRole !== 'supervisor' && !isExecutiveRole(userRole)) {
+    return c.json({ success: false, error: 'Only supervisors and executive roles can verify meetings' }, 403);
   }
 
   const meetingId = c.req.param('meetingId');
@@ -504,6 +567,12 @@ projectRoutes.put('/:id/meetings/:meetingId/verify', async (c) => {
       verified_at = datetime('now')
      WHERE id = ?`
   ).bind(newStatus, feedback || null, meetingId).run();
+  await logAuditEvent(c.env.DB, c.req.header('X-User-Id') || 'system', userRole, 'meeting_verified', {
+    entityType: 'meeting',
+    entityId: String(meetingId),
+    details: `Meeting verification status changed to ${newStatus}`,
+    metadata: { project_id: c.req.param('id'), meeting_id: meetingId, action, feedback: feedback || null }
+  });
 
   return c.json({
     success: true,
@@ -520,8 +589,8 @@ projectRoutes.post('/:id/evaluations', async (c) => {
   const userRole = c.req.header('X-User-Role') || 'student';
   const supervisorId = c.req.header('X-User-Id') || 'demo-user';
 
-  if (userRole !== 'supervisor' && userRole !== 'coordinator') {
-    return c.json({ success: false, error: 'Only supervisors and coordinators can submit student evaluations' }, 403);
+  if (userRole !== 'supervisor' && !isExecutiveRole(userRole)) {
+    return c.json({ success: false, error: 'Only supervisors and executive roles can submit student evaluations' }, 403);
   }
 
   const projectId = c.req.param('id');
@@ -543,6 +612,12 @@ projectRoutes.post('/:id/evaluations', async (c) => {
   ).bind(id, projectId, student_id, supervisorId, grade || null, score ? Number(score) : null, comments.trim()).run();
 
   const evalRecord = await c.env.DB.prepare('SELECT * FROM evaluations WHERE id = ?').bind(id).first();
+  await logAuditEvent(c.env.DB, supervisorId, userRole, 'evaluation_created', {
+    entityType: 'evaluation',
+    entityId: String(id),
+    details: `Evaluation created for student ${student_id}`,
+    metadata: { project_id: projectId, student_id, supervisor_id: supervisorId, grade: grade || null, score: score ? Number(score) : null }
+  });
   return c.json({ success: true, data: evalRecord, message: 'Student evaluation submitted successfully.' }, 201);
 });
 

@@ -14,7 +14,7 @@ interface D1Database {
 }
 // Shared DB cascade helpers for deleting projects/groups (and everything referencing them).
 
-// Delete projects and all child records (weekly_updates, evaluations, tasks, feedback, media, links, meetings, members).
+// Delete projects and all child records (weekly_updates, evaluations, feedback, media, links, meetings, members).
 // projectIds must be unique; empty list is a no-op.
 export async function deleteProjectsCascade(db: D1Database, projectIds: string[]) {
   if (!projectIds.length) return;
@@ -22,7 +22,6 @@ export async function deleteProjectsCascade(db: D1Database, projectIds: string[]
   await db.batch([
     db.prepare(`DELETE FROM weekly_updates WHERE project_id IN (SELECT value FROM json_each(?))`).bind(ids),
     db.prepare(`DELETE FROM evaluations WHERE project_id IN (SELECT value FROM json_each(?))`).bind(ids),
-    db.prepare(`DELETE FROM tasks WHERE project_id IN (SELECT value FROM json_each(?))`).bind(ids),
     db.prepare(`DELETE FROM project_feedback WHERE project_id IN (SELECT value FROM json_each(?))`).bind(ids),
     db.prepare(`DELETE FROM project_media WHERE project_id IN (SELECT value FROM json_each(?))`).bind(ids),
     db.prepare(`DELETE FROM project_links WHERE project_id IN (SELECT value FROM json_each(?))`).bind(ids),

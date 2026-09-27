@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { serveStatic } from 'hono/cloudflare-workers';
 import { aiRoutes } from './modules/ai/ai.routes';
 import { proposalRoutes } from './modules/proposals/proposal.routes';
 import { projectRoutes } from './modules/projects/project.routes';
@@ -9,6 +10,8 @@ import { groupRoutes } from './modules/groups/group.routes';
 import { chatRoutes, presenceRoutes } from './modules/chat/chat.routes';
 import { notificationRoutes } from './modules/notifications/notification.routes';
 import { applicationRoutes } from './modules/applications/application.routes';
+import { defenseRoutes } from './modules/defense/defense.routes';
+import { auditRoutes } from './modules/audit/audit.routes';
 import type { Env } from './modules/ai/ai.types';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -27,11 +30,16 @@ app.route('/api/groups', groupRoutes);
 app.route('/api/chats', chatRoutes);
 app.route('/api/presence', presenceRoutes);
 app.route('/api/notifications', notificationRoutes);
+app.route('/api/defense', defenseRoutes);
+app.route('/api/audit', auditRoutes);
 
 // Health check
 app.get('/api/health', (c) => {
   return c.json({ status: 'ok', timestamp: new Date().toISOString(), version: '1.0.0' });
 });
+
+// Serve static assets before the SPA catch-all
+app.use('/static/*', serveStatic({ root: './public' }));
 
 // Serve the SPA frontend
 app.get('*', (c) => {
@@ -68,43 +76,11 @@ function getIndexHTML(): string {
       }
     }
   </script>
-  <style>
-    [x-cloak] { display: none !important; }
-    .fade-in { animation: fadeIn 0.3s ease-in-out; }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-    .skeleton { background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; }
-    @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
-    .score-ring { position: relative; display: inline-flex; align-items: center; justify-content: center; }
-    .score-ring svg { transform: rotate(-90deg); }
-    .toast { position: fixed; bottom: 1rem; right: 1rem; z-index: 9999; }
-    .chat-scroll::-webkit-scrollbar { width: 6px; }
-    .chat-scroll::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 999px; }
-    .eq-bar { transform-origin: bottom; }
-    .chat-voice-playing .eq-bar { animation: eqBounce 0.9s ease-in-out infinite; }
-    @keyframes eqBounce { 0%, 100% { transform: scaleY(0.4); } 50% { transform: scaleY(1); } }
-
-    /* Hide native scrollbars globally for horizontal tab bars while keeping touch/drag scrolling active */
-    .no-scrollbar::-webkit-scrollbar,
-    .scrollbar-none::-webkit-scrollbar,
-    #apps-tab-bar::-webkit-scrollbar,
-    .overflow-x-auto::-webkit-scrollbar {
-      display: none !important;
-      width: 0 !important;
-      height: 0 !important;
-    }
-    .no-scrollbar,
-    .scrollbar-none,
-    #apps-tab-bar,
-    .overflow-x-auto {
-      -ms-overflow-style: none !important;
-      scrollbar-width: none !important;
-    }
-  </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
   <div id="app"></div>
-  <div id="toast-container" class="toast"></div>
-  <script src="/static/app.js?v=20260810-notif"></script>
+  <div id="toast-container" class="fixed bottom-4 right-4 z-[99999] pointer-events-none"></div>
+  <script src="/static/app.js?v=20260927-1"></script>
 </body>
 </html>`;
 }

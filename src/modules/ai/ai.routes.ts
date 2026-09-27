@@ -4,6 +4,8 @@ import type { Env } from './ai.types';
 
 type Variables = { userId: string; userRole: string };
 const aiRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
+const EXECUTIVE_ROLES = new Set(['coordinator', 'hod', 'dean']);
+const isExecutiveRole = (role?: string | null) => !!role && EXECUTIVE_ROLES.has(role);
 
 // Middleware: Extract user context (simplified - in production use JWT/session)
 aiRoutes.use('*', async (c, next) => {
@@ -92,9 +94,9 @@ aiRoutes.post('/recommend-supervisor', async (c) => {
   const userId = c.get('userId');
   const userRole = c.get('userRole');
 
-  // Only coordinators can request supervisor recommendations
-  if (userRole !== 'coordinator' && userRole !== 'admin') {
-    return c.json({ success: false, error: 'Only coordinators can request supervisor recommendations' }, 403);
+  // Executive roles can request supervisor recommendations
+  if (!isExecutiveRole(userRole) && userRole !== 'admin') {
+    return c.json({ success: false, error: 'Only coordinators, HOD, Dean, and administrators can request supervisor recommendations' }, 403);
   }
 
   const allowed = await ai.checkRateLimit(userId, 'supervisor_recommendation', 10, 60);
@@ -157,9 +159,9 @@ aiRoutes.post('/feedback-suggestions', async (c) => {
   const userId = c.get('userId');
   const userRole = c.get('userRole');
 
-  // Only supervisors and coordinators
-  if (userRole !== 'supervisor' && userRole !== 'coordinator' && userRole !== 'admin') {
-    return c.json({ success: false, error: 'Only supervisors can use feedback assistant' }, 403);
+  // Only supervisors and executive roles
+  if (userRole !== 'supervisor' && !isExecutiveRole(userRole) && userRole !== 'admin') {
+    return c.json({ success: false, error: 'Only supervisors and executive roles can use feedback assistant' }, 403);
   }
 
   const allowed = await ai.checkRateLimit(userId, 'feedback_assistant', 10, 60);

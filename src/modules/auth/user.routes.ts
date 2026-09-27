@@ -2,9 +2,45 @@ import { Hono } from 'hono';
 import type { Env } from '../ai/ai.types';
 import { generateId } from '../ai/ai.utils';
 import { deleteGroupsCascade, deleteProjectsCascade } from '../../utils/cascade';
+import {
+  clearedSessionCookie,
+  createSession,
+  destroySession,
+  readSessionToken,
+  resolveSessionRole,
+  sessionCookie,
+} from '../../utils/session';
 import { createNotification, notifyRole } from '../notifications/notification.routes';
+import { logAuditEvent } from '../audit/audit.routes';
 
 const userRoutes = new Hono<{ Bindings: Env }>();
+const EXECUTIVE_ROLES = new Set(['coordinator', 'hod', 'dean']);
+const isExecutiveRole = (role?: string | null) => !!role && EXECUTIVE_ROLES.has(role);
+
+async function ensureExecutiveAccounts(db: Env['DB']) {
+  const required = [
+    { id: 'coord-1', email: 'admin@university.edu', name: 'Dr. Admin Coordinator', role: 'coordinator' },
+    { id: 'hod-1', email: 'hod@university.edu', name: 'Dr. HOD', role: 'hod' },
+    { id: 'dean-1', email: 'dean@university.edu', name: 'Dr. Dean', role: 'dean' },
+  ];
+
+  for (const user of required) {
+    const existing = await db.prepare(
+      'SELECT id FROM users WHERE LOWER(email) = LOWER(?) OR id = ? LIMIT 1'
+    ).bind(user.email, user.id).first();
+
+    if (!existing) {
+      await db.prepare(
+        `INSERT INTO users (id, email, name, role, department, status, password)
+         VALUES (?, ?, ?, ?, ?, 'active', 'TahaRana@123')`
+      ).bind(user.id, user.email, user.name, user.role, 'Computer Science').run();
+    } else {
+      await db.prepare(
+        `UPDATE users SET name = ?, role = ?, department = COALESCE(department, 'Computer Science'), status = COALESCE(status, 'active'), password = COALESCE(password, 'TahaRana@123') WHERE id = ? OR LOWER(email) = LOWER(?)`
+      ).bind(user.name, user.role, user.id, user.email).run();
+    }
+  }
+}
 
 // POST /api/users/login
 userRoutes.post('/login', async (c) => {
@@ -14,6 +50,8 @@ userRoutes.post('/login', async (c) => {
   if (!username || !password) {
     return c.json({ success: false, error: 'Email and password are required' }, 400);
   }
+
+  await ensureExecutiveAccounts(c.env.DB);
 
   // Look up the user by email or student ID
   const user = await c.env.DB.prepare(
@@ -44,6 +82,8 @@ userRoutes.post('/login', async (c) => {
       // Default passwords for seeded accounts
       const defaultPasswords: Record<string, string> = {
         coordinator: 'TahaRana@123',
+        hod: 'TahaRana@123',
+        dean: 'TahaRana@123',
         supervisor: 'supervisor123',
         student: 'student123'
       };
@@ -55,6 +95,15 @@ userRoutes.post('/login', async (c) => {
 
     // Success — return user without password field
     const { password: _pw, ...safeUser } = user;
+    const token = await createSession(c.env.DB, String(user.id), String(user.role));
+    const isHttps = new URL(c.req.url).protocol === 'https:';
+    c.header('Set-Cookie', sessionCookie(token, isHttps), { append: true });
+    await logAuditEvent(c.env.DB, String(user.id), String(user.role), 'user_login_success', {
+      entityType: 'user',
+      entityId: String(user.id),
+      details: `${user.name} logged in successfully`,
+      metadata: { email: user.email, role: user.role }
+    });
     return c.json({ success: true, data: { user: safeUser, message: 'Login successful' } });
   }
 
@@ -71,11 +120,18 @@ userRoutes.post('/register', async (c) => {
   }, 403);
 });
 
+// POST /api/users/logout — clears the session cookie used by plain browser navigations
+userRoutes.post('/logout', async (c) => {
+  await destroySession(c.env.DB, readSessionToken(c.req.header('Cookie')));
+  c.header('Set-Cookie', clearedSessionCookie(), { append: true });
+  return c.json({ success: true, message: 'Logged out' });
+});
+
 // GET /api/users/pending — Get all pending approval users (coordinator only)
 userRoutes.get('/pending', async (c) => {
   const userRole = c.req.header('X-User-Role');
-  if (userRole !== 'coordinator') {
-    return c.json({ success: false, error: 'Only coordinators can view pending users' }, 403);
+  if (!isExecutiveRole(userRole)) {
+    return c.json({ success: false, error: 'Only coordinators, HOD, and Dean can view pending users' }, 403);
   }
   const result = await c.env.DB.prepare(
     "SELECT id, email, name, role, department, expertise, max_students, created_at FROM users WHERE status = 'pending' ORDER BY created_at DESC"
@@ -86,13 +142,21 @@ userRoutes.get('/pending', async (c) => {
 // PUT /api/users/:id/approve — Coordinator approves a pending user
 userRoutes.put('/:id/approve', async (c) => {
   const userRole = c.req.header('X-User-Role');
-  if (userRole !== 'coordinator') {
-    return c.json({ success: false, error: 'Only coordinators can approve users' }, 403);
+  if (!isExecutiveRole(userRole)) {
+    return c.json({ success: false, error: 'Only coordinators, HOD, and Dean can approve users' }, 403);
   }
   const id = c.req.param('id');
+  const actorId = c.req.header('X-User-Id') || 'system';
+  const actorRole = c.req.header('X-User-Role') || 'system';
   await c.env.DB.prepare("UPDATE users SET status = 'active' WHERE id = ?").bind(id).run();
   const user = await c.env.DB.prepare('SELECT id, email, name, role, department, status FROM users WHERE id = ?').bind(id).first();
   if (!user) return c.json({ success: false, error: 'User not found' }, 404);
+  await logAuditEvent(c.env.DB, actorId, actorRole, 'user_approved', {
+    entityType: 'user',
+    entityId: String(id),
+    details: `${actorRole} approved ${user.name || 'user'} account`,
+    metadata: { approved_user_id: id, approved_user_email: user.email, approved_user_role: user.role }
+  });
   await createNotification(c.env.DB, id, {
     type: 'approval',
     title: 'Your account was approved!',
@@ -106,13 +170,21 @@ userRoutes.put('/:id/approve', async (c) => {
 // PUT /api/users/:id/reject — Coordinator rejects a pending user
 userRoutes.put('/:id/reject', async (c) => {
   const userRole = c.req.header('X-User-Role');
-  if (userRole !== 'coordinator') {
-    return c.json({ success: false, error: 'Only coordinators can reject users' }, 403);
+  if (!isExecutiveRole(userRole)) {
+    return c.json({ success: false, error: 'Only coordinators, HOD, and Dean can reject users' }, 403);
   }
   const id = c.req.param('id');
+  const actorId = c.req.header('X-User-Id') || 'system';
+  const actorRole = c.req.header('X-User-Role') || 'system';
   await c.env.DB.prepare("UPDATE users SET status = 'rejected' WHERE id = ?").bind(id).run();
-  const rejectedUser = await c.env.DB.prepare('SELECT id, name FROM users WHERE id = ?').bind(id).first();
+  const rejectedUser = await c.env.DB.prepare('SELECT id, name, email, role FROM users WHERE id = ?').bind(id).first();
   if (rejectedUser) {
+    await logAuditEvent(c.env.DB, actorId, actorRole, 'user_rejected', {
+      entityType: 'user',
+      entityId: String(id),
+      details: `${actorRole} rejected ${rejectedUser.name || 'user'} account`,
+      metadata: { rejected_user_id: id, rejected_user_email: rejectedUser.email, rejected_user_role: rejectedUser.role }
+    });
     await createNotification(c.env.DB, id, {
       type: 'approval',
       title: 'Your registration was rejected',
@@ -140,12 +212,12 @@ userRoutes.get('/chattable', async (c) => {
 
   // Determine which roles this user may chat with
   let allowedRoles: string[] = [];
-  if (caller.role === 'coordinator') {
+  if (isExecutiveRole(caller.role)) {
     allowedRoles = ['supervisor', 'student'];
   } else if (caller.role === 'supervisor') {
-    allowedRoles = ['student', 'coordinator'];
+    allowedRoles = ['student', 'coordinator', 'hod', 'dean'];
   } else if (caller.role === 'student') {
-    allowedRoles = ['supervisor', 'coordinator'];
+    allowedRoles = ['supervisor', 'coordinator', 'hod', 'dean'];
   }
 
   if (!allowedRoles.length) {
@@ -213,14 +285,20 @@ userRoutes.put('/:id/avatar', async (c) => {
     return c.json({ success: false, error: 'Invalid image format. Please upload a valid image.' }, 400);
   }
   const approxBytes = Math.floor(avatar.length * 3 / 4);
-  if (approxBytes > 500 * 1024) {
-    return c.json({ success: false, error: 'Image is too large (max 500KB). Please use a smaller image.' }, 400);
+  if (approxBytes > 2 * 1024 * 1024) {
+    return c.json({ success: false, error: 'Image is too large (max 2MB). Please use a smaller image.' }, 400);
   }
 
   const target = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(id).first();
   if (!target) return c.json({ success: false, error: 'User not found' }, 404);
 
   await c.env.DB.prepare('UPDATE users SET avatar = ? WHERE id = ?').bind(avatar, id).run();
+  await logAuditEvent(c.env.DB, userId, c.req.header('X-User-Role') || 'student', 'user_avatar_updated', {
+    entityType: 'user',
+    entityId: String(id),
+    details: `Profile photo updated for user ${id}`,
+    metadata: { user_id: id }
+  });
   return c.json({ success: true, message: 'Profile photo updated!' });
 });
 
@@ -230,7 +308,7 @@ userRoutes.put('/:id', async (c) => {
   const userId = c.req.header('X-User-Id') || 'demo-user';
   const userRole = c.req.header('X-User-Role') || 'student';
 
-  if (userId !== id && userRole !== 'coordinator') {
+  if (userId !== id && !isExecutiveRole(userRole)) {
     return c.json({ success: false, error: 'You can only update your own profile' }, 403);
   }
 
@@ -278,6 +356,12 @@ userRoutes.put('/:id', async (c) => {
   const user = await c.env.DB.prepare(
     'SELECT id, email, name, role, department, student_id_num, program, shift, status, avatar FROM users WHERE id = ?'
   ).bind(id).first();
+  await logAuditEvent(c.env.DB, userId, userRole, 'user_updated', {
+    entityType: 'user',
+    entityId: String(id),
+    details: `Profile updated for ${user?.name || id}`,
+    metadata: { user_id: id, changed_fields: fields.map((field) => field.replace(' = ?', '').trim()) }
+  });
   return c.json({ success: true, data: user, message: 'Profile updated!' });
 });
 
@@ -375,22 +459,28 @@ userRoutes.post('/', async (c) => {
   ).run();
 
   const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first();
+  await logAuditEvent(c.env.DB, c.req.header('X-User-Id') || 'system', c.req.header('X-User-Role') || 'system', 'user_created', {
+    entityType: 'user',
+    entityId: String(id),
+    details: `User ${body.name || body.email} created`,
+    metadata: { created_user_id: id, email: body.email, role: body.role || 'student' }
+  });
   return c.json({ success: true, data: user }, 201);
 });
 
 // DELETE /api/users/:id — coordinator deletes a student/supervisor with full cascade
 userRoutes.delete('/:id', async (c) => {
   const userRole = c.req.header('X-User-Role');
-  if (userRole !== 'coordinator') {
-    return c.json({ success: false, error: 'Only coordinators can delete users' }, 403);
+  if (!isExecutiveRole(userRole)) {
+    return c.json({ success: false, error: 'Only coordinators, HOD, and Dean can delete users' }, 403);
   }
   const id = c.req.param('id');
   const target = await c.env.DB.prepare(
     'SELECT id, name, role, status, email, student_id_num FROM users WHERE id = ?'
   ).bind(id).first() as Record<string, any> | null;
   if (!target) return c.json({ success: false, error: 'User not found' }, 404);
-  if (target.role === 'coordinator') {
-    return c.json({ success: false, error: 'Coordinator accounts cannot be deleted' }, 400);
+  if (isExecutiveRole(target.role)) {
+    return c.json({ success: false, error: 'Executive accounts cannot be deleted' }, 400);
   }
 
   try {
@@ -442,9 +532,6 @@ userRoutes.delete('/:id', async (c) => {
     await safeDelete('DELETE FROM evaluations WHERE student_id = ? OR supervisor_id = ?', id, id);
     await safeDelete('DELETE FROM notifications WHERE user_id = ?', id);
     await safeDelete('DELETE FROM presence WHERE user_id = ?', id);
-    await safeDelete('DELETE FROM user_presence WHERE user_id = ?', id);
-    await safeDelete('DELETE FROM tasks WHERE assigned_to = ?', id);
-    await safeDelete('DELETE FROM activity_log WHERE user_id = ?', id);
     await safeDelete('DELETE FROM group_members WHERE user_id = ?', id);
     await safeDelete('DELETE FROM project_members WHERE user_id = ?', id);
     await safeDelete('DELETE FROM project_media WHERE uploaded_by = ?', id);
@@ -461,6 +548,12 @@ userRoutes.delete('/:id', async (c) => {
 
     // Final delete user
     await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id).run();
+    await logAuditEvent(c.env.DB, c.req.header('X-User-Id') || 'system', userRole || 'system', 'user_deleted', {
+      entityType: 'user',
+      entityId: String(id),
+      details: `User ${target.name || target.email || id} deleted`,
+      metadata: { deleted_user_id: id, deleted_user_email: target.email || null, deleted_user_role: target.role || null }
+    });
   } catch (e) {
     console.error('Delete user error:', e);
     return c.json({ success: false, error: 'Failed to delete user: ' + ((e as Error).message || 'unknown error') }, 500);

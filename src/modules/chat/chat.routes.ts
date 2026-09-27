@@ -43,10 +43,13 @@ async function resolveIdentity(db: D1Database, userId: string): Promise<ChatUser
 // Role-based chat permission rules
 function canChat(fromRole: string, toRole: string): boolean {
   if (!fromRole || !toRole) return false;
-  // Coordinator can chat with supervisors and students (not other coordinators)
-  if (fromRole === 'coordinator') return toRole === 'supervisor' || toRole === 'student';
-  if (fromRole === 'supervisor') return toRole === 'student' || toRole === 'coordinator';
-  if (fromRole === 'student') return toRole === 'supervisor' || toRole === 'coordinator';
+  const executiveRoles = new Set(['coordinator', 'hod', 'dean']);
+  const fromExec = executiveRoles.has(fromRole);
+  const toExec = executiveRoles.has(toRole);
+  // Executive roles can chat with supervisors and students (not other executive users)
+  if (fromExec) return toRole === 'supervisor' || toRole === 'student';
+  if (fromRole === 'supervisor') return toRole === 'student' || toExec;
+  if (fromRole === 'student') return toRole === 'supervisor' || toExec;
   return false;
 }
 

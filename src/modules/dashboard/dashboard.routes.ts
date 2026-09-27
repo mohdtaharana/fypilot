@@ -2,6 +2,8 @@ import { Hono } from 'hono';
 import type { Env } from '../ai/ai.types';
 
 const dashboardRoutes = new Hono<{ Bindings: Env }>();
+const EXECUTIVE_ROLES = new Set(['coordinator', 'hod', 'dean']);
+const isExecutiveRole = (role?: string | null) => !!role && EXECUTIVE_ROLES.has(role);
 
 // GET /api/dashboard/stats
 dashboardRoutes.get('/stats', async (c) => {
@@ -26,7 +28,9 @@ dashboardRoutes.get('/stats', async (c) => {
       COUNT(*) as total,
       SUM(CASE WHEN role = 'student' THEN 1 ELSE 0 END) as students,
       SUM(CASE WHEN role = 'supervisor' THEN 1 ELSE 0 END) as supervisors,
-      SUM(CASE WHEN role = 'coordinator' THEN 1 ELSE 0 END) as coordinators
+      SUM(CASE WHEN role = 'coordinator' THEN 1 ELSE 0 END) as coordinators,
+      SUM(CASE WHEN role = 'hod' THEN 1 ELSE 0 END) as hods,
+      SUM(CASE WHEN role = 'dean' THEN 1 ELSE 0 END) as deans
      FROM users`).first(),
   ]);
 
@@ -39,8 +43,8 @@ dashboardRoutes.get('/stats', async (c) => {
 // GET /api/dashboard/people — coordinator sees all students & groups (for management view)
 dashboardRoutes.get('/people', async (c) => {
   const userRole = c.req.header('X-User-Role');
-  if (userRole !== 'coordinator') {
-    return c.json({ success: false, error: 'Only coordinators can view students & groups' }, 403);
+  if (!isExecutiveRole(userRole)) {
+    return c.json({ success: false, error: 'Only coordinators, HOD, and Dean can view students & groups' }, 403);
   }
 
   const [studentsRows, groupsRows, membersRows] = await Promise.all([

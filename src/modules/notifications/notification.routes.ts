@@ -35,9 +35,11 @@ export async function createNotification(db: D1Database, userId: string | null |
  */
 export async function notifyRole(db: D1Database, role: string, payload: NotificationPayload): Promise<void> {
   try {
+    const roles = role === 'coordinator' ? ['coordinator', 'hod', 'dean'] : [role];
+    const placeholders = roles.map(() => '?').join(', ');
     const res = await db.prepare(
-      "SELECT id FROM users WHERE role = ? AND (status = 'active' OR status IS NULL)"
-    ).bind(role).all();
+      `SELECT id FROM users WHERE role IN (${placeholders}) AND (status = 'active' OR status IS NULL)`
+    ).bind(...roles).all();
     for (const u of res.results as { id: string }[]) {
       await createNotification(db, u.id, payload);
     }

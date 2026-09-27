@@ -2,9 +2,12 @@ import { Hono } from 'hono';
 import type { Env } from '../ai/ai.types';
 import { generateId } from '../ai/ai.utils';
 import { createNotification, notifyRole } from '../notifications/notification.routes';
+import { logAuditEvent } from '../audit/audit.routes';
 
 type Variables = { userId: string; userRole: string };
 const proposalRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
+const EXECUTIVE_ROLES = new Set(['coordinator', 'hod', 'dean']);
+const isExecutiveRole = (role?: string | null) => !!role && EXECUTIVE_ROLES.has(role);
 
 // GET /api/proposals - List all proposals
 proposalRoutes.get('/', async (c) => {
@@ -74,6 +77,16 @@ proposalRoutes.post('/', async (c) => {
     }, 403);
   }
 
+  const existingProposal = await c.env.DB.prepare(
+    'SELECT id FROM proposals WHERE group_id = ? LIMIT 1'
+  ).bind(group.id).first();
+  if (existingProposal) {
+    return c.json({
+      success: false,
+      error: 'This group already has a proposal. A new proposal cannot be created after submission.'
+    }, 409);
+  }
+
   const id = generateId();
 
   await c.env.DB.prepare(
@@ -86,6 +99,12 @@ proposalRoutes.post('/', async (c) => {
   ).run();
 
   const proposal = await c.env.DB.prepare('SELECT * FROM proposals WHERE id = ?').bind(id).first();
+  await logAuditEvent(c.env.DB, userId, userRole, 'proposal_created', {
+    entityType: 'proposal',
+    entityId: String(id),
+    details: `Proposal ${body.title} created by student leader`,
+    metadata: { proposal_id: id, proposal_title: body.title, group_id: group.id }
+  });
   await notifyRole(c.env.DB, 'coordinator', {
     type: 'proposal',
     title: 'New proposal submitted',
@@ -112,12 +131,29 @@ proposalRoutes.put('/:id', async (c) => {
     const id = c.req.param('id');
     const body = await c.req.json();
     const userRole = c.req.header('X-User-Role') || 'student';
+    const userId = c.req.header('X-User-Id') || 'demo-user';
+
+    const proposal = await c.env.DB.prepare(
+      'SELECT * FROM proposals WHERE id = ?'
+    ).bind(id).first() as Record<string, any> | null;
+    if (!proposal) return c.json({ success: false, error: 'Proposal not found' }, 404);
+
+    if (userRole === 'student' && proposal.status !== 'draft') {
+      return c.json({
+        success: false,
+        error: 'Proposal is locked after submission and cannot be edited by students.'
+      }, 403);
+    }
+
+    if (userRole === 'student' && proposal.submitted_by && proposal.submitted_by !== userId) {
+      return c.json({ success: false, error: 'Only the proposal submitter can edit this draft.' }, 403);
+    }
 
     // Executive actions (status decisions / supervisor assignment) are limited to coordinators & supervisors
     const executiveFields = ['status', 'supervisor_id'];
     const touchesExecutive = executiveFields.some((f) => body[f] !== undefined);
-    if (touchesExecutive && userRole !== 'coordinator' && userRole !== 'supervisor') {
-      return c.json({ success: false, error: 'Only coordinators and supervisors can approve or assign proposals' }, 403);
+    if (touchesExecutive && !isExecutiveRole(userRole) && userRole !== 'supervisor') {
+      return c.json({ success: false, error: 'Only executive roles and supervisors can approve or assign proposals' }, 403);
     }
 
     const fields: string[] = [];
@@ -140,8 +176,20 @@ proposalRoutes.put('/:id', async (c) => {
     const updated = await c.env.DB.prepare(
       'SELECT p.*, u.name as submitter_name FROM proposals p LEFT JOIN users u ON p.submitted_by = u.id WHERE p.id = ?'
     ).bind(id).first() as Record<string, any> | null;
+    await logAuditEvent(c.env.DB, userId, userRole, 'proposal_updated', {
+      entityType: 'proposal',
+      entityId: String(id),
+      details: `Proposal ${updated?.title || id} updated`,
+      metadata: { proposal_id: id, changed_fields: fields.map((field) => field.replace(' = ?', '').trim()) }
+    });
 
     if (body.status !== undefined && updated) {
+      await logAuditEvent(c.env.DB, userId, userRole, 'proposal_status_changed', {
+        entityType: 'proposal',
+        entityId: String(id),
+        details: `Proposal status changed to ${body.status}`,
+        metadata: { proposal_id: id, status: body.status, actor_id: userId, actor_role: userRole }
+      });
       const statusLabel = { approved: 'approved', rejected: 'rejected', under_review: 'sent for review', revision_requested: 'sent back for revision' };
       await createNotification(c.env.DB, updated.submitted_by, {
         type: 'proposal',
@@ -222,8 +270,41 @@ proposalRoutes.put('/:id', async (c) => {
 // POST /api/proposals/:id/submit
 proposalRoutes.post('/:id/submit', async (c) => {
   const id = c.req.param('id');
+  const userRole = c.req.header('X-User-Role') || 'student';
+  const userId = c.req.header('X-User-Id') || 'demo-user';
+
+  if (userRole !== 'student') {
+    return c.json({ success: false, error: 'Only students can submit proposals.' }, 403);
+  }
+
+  const proposal = await c.env.DB.prepare(
+    'SELECT * FROM proposals WHERE id = ?'
+  ).bind(id).first() as Record<string, any> | null;
+  if (!proposal) return c.json({ success: false, error: 'Proposal not found' }, 404);
+
+  if (proposal.submitted_by !== userId) {
+    return c.json({ success: false, error: 'Only the group leader who created this proposal can submit it.' }, 403);
+  }
+
+  if (proposal.status !== 'draft') {
+    return c.json({ success: false, error: 'This proposal has already been submitted and is locked.' }, 409);
+  }
+
+  const group = await c.env.DB.prepare(
+    'SELECT leader_id FROM groups WHERE id = ?'
+  ).bind(proposal.group_id).first() as { leader_id: string } | null;
+  if (!group || group.leader_id !== userId) {
+    return c.json({ success: false, error: 'Only the group leader can submit the proposal.' }, 403);
+  }
+
   await c.env.DB.prepare("UPDATE proposals SET status = 'submitted', updated_at = datetime('now') WHERE id = ?").bind(id).run();
   const updated = await c.env.DB.prepare('SELECT * FROM proposals WHERE id = ?').bind(id).first();
+  await logAuditEvent(c.env.DB, userId, userRole, 'proposal_submitted', {
+    entityType: 'proposal',
+    entityId: String(id),
+    details: `Proposal ${updated?.title || id} submitted by group leader`,
+    metadata: { proposal_id: id, group_id: proposal.group_id, submitted_by: userId }
+  });
   return c.json({ success: true, data: updated });
 });
 

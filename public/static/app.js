@@ -73,6 +73,14 @@ const LIFECYCLE_STAGES = [
   'Other'
 ];
 
+const EXECUTIVE_ROLES = new Set(['coordinator', 'hod', 'dean']);
+function isExecutiveRole(role) {
+  return !!role && EXECUTIVE_ROLES.has(role);
+}
+function isAuditAccessRole(role) {
+  return role === 'hod' || role === 'dean';
+}
+
 const state = {
   isAuthenticated: !!initialUser,
   currentUser: initialUser,
@@ -90,6 +98,9 @@ const state = {
   notifGlobalTimer: null,
   proposals: [],
   projects: [],
+  defenseConfig: null,
+  defenseSubmissions: [],
+  defenseLoading: false,
   users: [],
   dashboardStats: null,
   pendingUsers: [],
@@ -119,6 +130,11 @@ const state = {
     department: 'Computer Science',
     group_name: '',
     project_title: '',
+    abstract: '',
+    problem_statement: '',
+    objectives: '',
+    methodology: '',
+    technologies: '',
     members: [{ name: '', student_id_num: '' }],
     pref_1: '',
     pref_2: '',
@@ -126,7 +142,10 @@ const state = {
     priority: 'Normal',
     internship_certificate_pdf: null,
     pdf_name: '',
-    pdf_size: ''
+    pdf_size: '',
+    transcript_certificate_pdf: null,
+    transcript_pdf_name: '',
+    transcript_pdf_size: ''
   },
   applySubmitted: false,
   applySubmittedData: null,
@@ -202,7 +221,7 @@ function showToast(message, type = 'info') {
   if (!container) return;
   const colors = { info: 'bg-blue-600', success: 'bg-emerald-600', error: 'bg-rose-600', warning: 'bg-amber-600' };
   const toast = document.createElement('div');
-  toast.className = `${colors[type]} text-white px-4 py-3 rounded-xl shadow-xl mb-2 fade-in text-sm max-w-sm flex items-center gap-2 font-medium z-[9999]`;
+  toast.className = `${colors[type]} text-white px-4 py-3 rounded-xl shadow-xl mb-2 fade-in text-sm max-w-sm flex items-center gap-2 font-medium pointer-events-auto relative z-[99999]`;
   toast.innerHTML = `<i class="fas ${type === 'success' ? 'fa-check-circle' : type === 'error' ? 'fa-exclamation-circle' : 'fa-info-circle'} text-base"></i><span>${message}</span>`;
   container.appendChild(toast);
   setTimeout(() => toast.remove(), 4000);
@@ -268,7 +287,7 @@ function render() {
 
   app.innerHTML = `
     ${renderNav()}
-    <main class="max-w-7xl mx-auto px-4 sm:px-6 py-6 min-h-[calc(100vh-4rem)]">
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 py-6">
       ${renderCurrentView()}
     </main>
   `;
@@ -412,8 +431,56 @@ function attachLoginEventListeners() {
 }
 }
 
+async function reviewPendingUserApplication(userOrId) {
+  const user = typeof userOrId === 'object' && userOrId
+    ? userOrId
+    : (state.pendingUsers || []).find(u => String(u.id) === String(userOrId));
+
+  if (!user) {
+    showToast('Pending user details could not be loaded for review.', 'warning');
+    return;
+  }
+
+  const normalizedEmail = String(user?.email || '').trim().toLowerCase();
+  const normalizedId = String(user?.student_id_num || user?.studentId || '').trim();
+
+  const openReview = (apps) => {
+    const match = (apps || []).find(app => {
+      const appEmail = String(app?.email || '').trim().toLowerCase();
+      const appId = String(app?.student_id_num || app?.student_id || '').trim();
+      return (normalizedEmail && appEmail && appEmail === normalizedEmail) || (normalizedId && appId && appId === normalizedId);
+    });
+
+    navigate('applications');
+    setTimeout(() => {
+      if (match) {
+        showReviewApplicationModal(match.id);
+      } else {
+        showToast('No matching student application was found for review.', 'warning');
+      }
+    }, 220);
+  };
+
+  try {
+    if (!(state.applications && state.applications.length)) {
+      const res = await api('/applications');
+      state.applications = res.data || [];
+    }
+    openReview(state.applications);
+  } catch (e) {
+    console.error('Failed to load pending application for review:', e);
+    showToast('Unable to open the review page right now. Please try again.', 'error');
+  }
+}
+
 async function approveUser(userId) {
   try {
+    const user = (state.pendingUsers || []).find(u => String(u.id) === String(userId));
+    if (user) {
+      await reviewPendingUserApplication(user);
+      return;
+    }
+
     const res = await api(`/users/${userId}/approve`, { method: 'PUT' });
     if (res.success) {
       showToast('User approved successfully! Account is now active.', 'success');
@@ -455,7 +522,7 @@ function renderPendingUsers(users) {
         ${u.role === 'supervisor' && u.expertise ? `<p class="text-[10px] text-indigo-600 truncate font-medium">Expertise: ${formatExpertise(u.expertise)}</p>` : ''}
       </div>
       <div class="flex items-center gap-2 shrink-0">
-        <button onclick="approveUser('${u.id}')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 shadow-sm transition-all"><i class="fas fa-check-circle"></i> Approve</button>
+        <button onclick="reviewPendingUserApplication('${u.id}')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 shadow-sm transition-all"><i class="fas fa-eye"></i> Review</button>
         <button onclick="rejectUser('${u.id}')" class="bg-rose-50 hover:bg-rose-100 text-rose-700 px-3 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1 border border-rose-200 transition-all"><i class="fas fa-times-circle"></i> Reject</button>
       </div>
     </div>
@@ -473,7 +540,7 @@ function formatExpertise(expertise) {
 }
 
 async function loadPendingUsers() {
-  if (!state.currentUser || state.currentUser.role !== 'coordinator') return;
+  if (!state.currentUser || !isExecutiveRole(state.currentUser.role)) return;
   try {
     const res = await api('/users/pending', { silentError: true });
     state.pendingUsers = res.data || [];
@@ -501,6 +568,8 @@ function logout() {
   state.activeChat = null;
   state.chatMessages = [];
   localStorage.removeItem('fypilot_user');
+  // Invalidate the server session cookie (used by direct downloads / new tabs)
+  fetch(`${API_BASE}/users/logout`, { method: 'POST', headers: { 'Content-Type': 'application/json' } }).catch(() => {});
   showToast('Logged out successfully', 'info');
   render();
 }
@@ -619,6 +688,11 @@ async function loadNotifications(silent) {
       state.notifUnread = countRes.data.counts || {};
       state.notifTotal = countRes.data.total || 0;
     }
+
+    if (state.currentUser && isExecutiveRole(state.currentUser.role) && state.currentView === 'dashboard') {
+      await loadPendingUsers();
+    }
+
     refreshNavBubbles();
     if (state.notifTotal !== prevTotal || state.notifOpen) refreshNotificationBells();
   } catch (e) {}
@@ -692,18 +766,22 @@ function renderNav() {
     { id: 'dashboard', label: 'Dashboard', icon: 'fa-chart-line' },
     { id: 'proposals', label: 'Proposals', icon: 'fa-file-alt' },
     { id: 'projects', label: 'Projects', icon: 'fa-project-diagram' },
+    { id: 'defense', label: 'Defense', icon: 'fa-file-export' },
     { id: 'supervisors', label: 'Supervisors', icon: 'fa-user-tie' },
     { id: 'chats', label: 'Chats', icon: 'fa-comments' },
-    ...(role === 'coordinator' ? [
+    ...(isAuditAccessRole(role) ? [{ id: 'audit-logs', label: 'Audit Logs', icon: 'fa-shield-alt' }] : []),
+    ...(isExecutiveRole(role) ? [
       { id: 'applications', label: 'Applications', icon: 'fa-file-signature' },
       { id: 'people', label: 'People', icon: 'fa-user-friends' }
     ] : []),
-    ...(role === 'student' || role === 'coordinator' || role === 'supervisor' ? [{ id: 'groups', label: role === 'student' ? 'My Group' : 'Groups', icon: 'fa-users' }] : []),
+    ...(role === 'student' || isExecutiveRole(role) || role === 'supervisor' ? [{ id: 'groups', label: role === 'student' ? 'My Group' : 'Groups', icon: 'fa-users' }] : []),
     { id: 'profile', label: 'Profile', icon: 'fa-id-badge' },
   ];
 
   const roleBadges = {
     coordinator: 'bg-purple-100 text-purple-700 border-purple-200',
+    hod: 'bg-indigo-100 text-indigo-700 border-indigo-200',
+    dean: 'bg-violet-100 text-violet-700 border-violet-200',
     supervisor: 'bg-blue-100 text-blue-700 border-blue-200',
     student: 'bg-emerald-100 text-emerald-700 border-emerald-200',
   };
@@ -762,7 +840,7 @@ function renderNav() {
         <!-- User Controls (Desktop) -->
         <div class="hidden md:flex items-center gap-3 shrink-0">
           <span class="hidden xl:flex px-2.5 py-1 rounded-full text-xs font-semibold border ${roleBadges[currentRole] || 'bg-gray-100'} capitalize items-center gap-1">
-            <i class="fas ${currentRole === 'coordinator' ? 'fa-crown text-purple-600' : currentRole === 'supervisor' ? 'fa-user-tie text-blue-600' : 'fa-user-graduate text-emerald-600'} text-xs"></i>
+            <i class="fas ${isExecutiveRole(currentRole) ? 'fa-crown text-purple-600' : currentRole === 'supervisor' ? 'fa-user-tie text-blue-600' : 'fa-user-graduate text-emerald-600'} text-xs"></i>
             ${currentRole}
           </span>
 
@@ -831,6 +909,7 @@ function renderCurrentView() {
     case 'proposals': return renderProposals();
     case 'proposal-detail': return renderProposalDetail();
     case 'projects': return renderProjects();
+    case 'defense': return renderDefense();
     case 'project-detail': return renderProjectDetail();
     case 'supervisors': return renderSupervisors();
     case 'chats': return renderChats();
@@ -839,6 +918,7 @@ function renderCurrentView() {
     case 'group-profile': return renderGroupProfile();
     case 'profile': return renderProfile();
     case 'applications': return renderApplicationsList();
+    case 'audit-logs': return renderAuditLogs();
     case 'apply': return renderPublicApplicationPage();
     default: return renderDashboard();
   }
@@ -847,7 +927,7 @@ function renderCurrentView() {
 // ===== Dashboard (Role-Specific) =====
 function renderDashboard() {
   const role = state.currentUser.role;
-  if (role === 'coordinator') return renderCoordinatorDashboard();
+  if (isExecutiveRole(role)) return renderCoordinatorDashboard();
   if (role === 'supervisor') return renderSupervisorDashboard();
   return renderStudentDashboard();
 }
@@ -987,6 +1067,52 @@ function renderPeople() {
     <!-- Dynamic results -->
     <div id="people-results" class="space-y-6">Loading...</div>
   </div>`;
+}
+
+function renderAuditLogs() {
+  if (!isAuditAccessRole(state.currentUser?.role)) {
+    return `
+      <div class="fade-in max-w-xl mx-auto bg-white rounded-2xl border border-rose-200 p-6 shadow-sm">
+        <div class="flex items-center gap-3 text-rose-600">
+          <i class="fas fa-lock text-xl"></i>
+          <h1 class="text-xl font-bold">Audit logs unavailable</h1>
+        </div>
+        <p class="text-sm text-gray-600 mt-3">Only HOD and Dean can access the complete audit trail.</p>
+      </div>`;
+  }
+
+  return `
+    <div class="fade-in space-y-6">
+      <div class="bg-gradient-to-r from-slate-900 via-indigo-900 to-violet-900 text-white rounded-2xl p-6 shadow-xl border border-violet-500/20">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <span class="inline-flex items-center gap-1.5 bg-violet-500/20 border border-violet-400/30 text-violet-100 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">
+              <i class="fas fa-shield-alt"></i> Restricted Audit
+            </span>
+            <h1 class="text-2xl sm:text-3xl font-bold mt-2">Operations Audit Trail</h1>
+            <p class="text-violet-100 text-sm mt-1">Review system activity with timestamped records and export access for leadership.</p>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button onclick="loadAuditLogs()" class="bg-white/10 hover:bg-white/20 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5">
+              <i class="fas fa-sync-alt"></i> Refresh
+            </button>
+            <button onclick="exportAuditLogs()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5">
+              <i class="fas fa-download"></i> Export CSV
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div id="audit-logs-container" class="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm">
+        <div class="animate-pulse space-y-3">
+          <div class="h-4 w-28 bg-gray-200 rounded"></div>
+          <div class="h-10 bg-gray-100 rounded-xl"></div>
+          <div class="h-10 bg-gray-100 rounded-xl"></div>
+          <div class="h-10 bg-gray-100 rounded-xl"></div>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function renderPeopleStats(data) {
@@ -1249,7 +1375,7 @@ function escapeHtml(str) {
 }
 
 async function loadPeople() {
-  if (!state.currentUser || state.currentUser.role !== 'coordinator') return;
+  if (!state.currentUser || !isExecutiveRole(state.currentUser.role)) return;
   try {
     const res = await api('/dashboard/people');
     state.people = res.data;
@@ -1400,9 +1526,11 @@ function renderStudentDashboard() {
           <p class="text-emerald-200 text-sm mt-1">Track your proposal progress and active project health.</p>
         </div>
         <div class="flex flex-wrap gap-2">
-          <button onclick="showNewProposalForm(); navigate('proposals')" class="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-md flex items-center gap-1.5">
-            <i class="fas fa-plus-circle"></i> Submit Proposal
-          </button>
+          ${!hasProposalForCurrentGroup() ? `
+            <button onclick="showNewProposalForm(); navigate('proposals')" class="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-md flex items-center gap-1.5">
+              <i class="fas fa-plus-circle"></i> Submit Proposal
+            </button>
+          ` : ''}
           <button onclick="navigate('projects')" class="bg-white/10 hover:bg-white/20 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5">
             <i class="fas fa-eye"></i> My Project
           </button>
@@ -1444,7 +1572,7 @@ function renderStudentDashboard() {
       <h3 class="font-bold text-sm mb-1 flex items-center gap-2"><i class="fas fa-graduation-cap text-yellow-400"></i> FYP Student Guide</h3>
       <p class="text-emerald-200 text-xs mb-3">Use AI tools to strengthen your proposal before submission.</p>
       <div class="flex flex-wrap gap-2">
-        <button onclick="navigate('proposals')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"><i class="fas fa-plus"></i> New Proposal</button>
+        ${!hasProposalForCurrentGroup() ? `<button onclick="navigate('proposals')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"><i class="fas fa-plus"></i> New Proposal</button>` : ''}
         <button onclick="navigate('projects')" class="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"><i class="fas fa-folder-open"></i> My Project</button>
         <button onclick="navigate('supervisors')" class="bg-slate-600 hover:bg-slate-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"><i class="fas fa-users"></i> Find Supervisor</button>
       </div>
@@ -1471,7 +1599,7 @@ function renderProposals() {
         <h1 class="text-2xl font-bold text-gray-900">Proposals</h1>
         <p class="text-gray-500 text-xs sm:text-sm mt-0.5">Manage and evaluate FYP project submissions</p>
       </div>
-      ${state.currentUser && state.currentUser.role === 'student' ? `
+      ${state.currentUser && state.currentUser.role === 'student' && !hasProposalForCurrentGroup() ? `
       <button onclick="showNewProposalForm()" class="bg-fypilot-600 hover:bg-fypilot-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-fypilot-500/20 transition-all flex items-center justify-center gap-2 shrink-0">
         <i class="fas fa-plus"></i>
         <span>New Proposal</span>
@@ -1489,6 +1617,7 @@ function renderProposalDetail() {
   const p = state.selectedProposal;
   if (!p) return '<p class="p-6 text-gray-500">No proposal selected</p>';
 
+  const executiveRole = isExecutiveRole(state.currentUser?.role) || state.currentUser?.role === 'supervisor';
   const statusColors = {
     draft: 'bg-gray-100 text-gray-700 border-gray-200',
     submitted: 'bg-blue-100 text-blue-700 border-blue-200',
@@ -1504,8 +1633,8 @@ function renderProposalDetail() {
       <i class="fas fa-arrow-left text-xs"></i> Back to Proposals
     </button>
 
-    <!-- EXECUTIVE POWER CONTROLS FOR COORDINATOR & SUPERVISOR -->
-    ${['coordinator', 'supervisor'].includes(state.currentUser.role) ? `
+    <!-- EXECUTIVE POWER CONTROLS FOR EXECUTIVE USERS & SUPERVISOR -->
+    ${(isExecutiveRole(state.currentUser.role) || state.currentUser.role === 'supervisor') ? `
     <div class="bg-gradient-to-r from-slate-900 to-indigo-900 text-white rounded-2xl p-4 sm:p-5 shadow-xl border border-indigo-500/30 space-y-4">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div class="flex items-start sm:items-center gap-3 min-w-0 flex-1">
@@ -1532,8 +1661,8 @@ function renderProposalDetail() {
         </button>
       </div>
 
-      <!-- Supervisor Allocation Control (Coordinator only) -->
-      ${state.currentUser.role === 'coordinator' ? `
+      <!-- Supervisor Allocation Control (Executive only) -->
+      ${isExecutiveRole(state.currentUser.role) ? `
       <div class="flex flex-col sm:flex-row sm:items-center gap-2 pt-3 border-t border-indigo-800/60">
         <span class="text-xs font-semibold text-indigo-200 shrink-0"><i class="fas fa-user-tie text-amber-400 mr-1"></i>Assign Supervisor:</span>
         <select id="proposal-supervisor-select" class="w-full sm:w-auto flex-1 bg-slate-800 border border-indigo-500/40 text-white text-xs rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400">
@@ -1638,7 +1767,7 @@ function renderProposalDetail() {
       </div>
     </div>
 
-    ${state.currentUser.role === 'coordinator' ? `
+    ${isExecutiveRole(state.currentUser.role) ? `
     <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
       <div class="flex items-center justify-between mb-4">
         <h3 class="font-bold text-gray-900 flex items-center gap-2 text-sm sm:text-base">
@@ -1694,6 +1823,7 @@ function renderProjectDetail() {
 
   const healthColors = { healthy: 'bg-emerald-100 text-emerald-700 border-emerald-200', at_risk: 'bg-amber-100 text-amber-700 border-amber-200', critical: 'bg-rose-100 text-rose-700 border-rose-200' };
   const healthIcons = { healthy: 'fa-check-circle text-emerald-500', at_risk: 'fa-exclamation-triangle text-amber-500', critical: 'fa-times-circle text-rose-500' };
+  const executiveProjectRole = isExecutiveRole(state.currentUser?.role) || state.currentUser?.role === 'supervisor';
   const isStudentMember = state.currentUser.role === 'student' && (p.members || []).some(m => m.id === state.currentUser.id);
 
   return `
@@ -1702,8 +1832,8 @@ function renderProjectDetail() {
       <i class="fas fa-arrow-left text-xs"></i> Back to Projects
     </button>
 
-    <!-- EXECUTIVE POWER CONTROLS FOR COORDINATOR & SUPERVISOR -->
-    ${['coordinator', 'supervisor'].includes(state.currentUser.role) ? `
+    <!-- EXECUTIVE POWER CONTROLS FOR EXECUTIVE USERS & SUPERVISOR -->
+    ${(isExecutiveRole(state.currentUser.role) || state.currentUser.role === 'supervisor') ? `
     <div class="bg-gradient-to-r from-slate-900 to-indigo-900 text-white rounded-2xl p-4 sm:p-5 shadow-xl border border-indigo-500/30 space-y-4">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div class="flex items-start sm:items-center gap-3 min-w-0 flex-1">
@@ -1731,8 +1861,8 @@ function renderProjectDetail() {
         </button>
       </div>
 
-      <!-- Supervisor Allocation Control (Coordinator only) -->
-      ${state.currentUser.role === 'coordinator' ? `
+      <!-- Supervisor Allocation Control (Executive only) -->
+      ${isExecutiveRole(state.currentUser.role) ? `
       <div class="flex flex-col sm:flex-row sm:items-center gap-2 pt-3 border-t border-indigo-800/60">
         <span class="text-xs font-semibold text-indigo-200 shrink-0"><i class="fas fa-user-tie text-amber-400 mr-1"></i>Change Supervisor:</span>
         <select id="project-supervisor-select" class="w-full sm:w-auto flex-1 bg-slate-800 border border-indigo-500/40 text-white text-xs rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400">
@@ -1827,7 +1957,7 @@ function renderProjectDetail() {
           <button onclick="document.getElementById('gallery-file-input').click()" class="bg-fypilot-600 hover:bg-fypilot-700 text-white px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"><i class="fas fa-upload"></i> Upload Image</button>
         </div>` : ''}
       </div>
-      <input type="file" id="gallery-file-input" accept="image/*" class="hidden" onchange="handleGalleryUpload('${p.id}', event)" />
+      <input type="file" id="gallery-file-input" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" class="hidden" onchange="handleGalleryUpload('${p.id}', event)" />
       ${isStudentMember ? `<input id="gallery-caption" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none" placeholder="Caption for next upload (optional)" />` : ''}
       <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
         ${(p.media || []).length ? p.media.map(m => `
@@ -1847,7 +1977,7 @@ function renderProjectDetail() {
         <h3 class="font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-comments text-fypilot-500"></i> Overall Project Feedback</h3>
         <span class="text-[11px] text-gray-400">By Coordinator / Supervisor</span>
       </div>
-      ${['coordinator', 'supervisor'].includes(state.currentUser.role) ? `
+      ${(isExecutiveRole(state.currentUser.role) || state.currentUser.role === 'supervisor') ? `
       <div class="flex flex-col sm:flex-row gap-2">
         <input id="overall-feedback-input" class="flex-1 border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none" placeholder="Write feedback for the project team..." />
         <button onclick="addOverallFeedback('${p.id}')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"><i class="fas fa-paper-plane"></i> Post</button>
@@ -1925,7 +2055,7 @@ function renderProjectDetail() {
                 </div>
               ` : ''}
 
-              ${['supervisor', 'coordinator'].includes(state.currentUser.role) ? `
+              ${(state.currentUser.role === 'supervisor' || isExecutiveRole(state.currentUser.role)) ? `
                 <div class="flex justify-end pt-2">
                   <button onclick="showVerifyMeetingModal('${p.id}', '${m.id}')" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs transition-all flex items-center gap-1">
                     <i class="fas fa-user-check"></i> Review &amp; Verify Meeting
@@ -1945,7 +2075,7 @@ function renderProjectDetail() {
           <h3 class="font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-star text-amber-500"></i> Student Evaluations &amp; Grading</h3>
           <p class="text-[11px] text-gray-500 mt-0.5">Formal supervisor feedback, performance evaluation &amp; scoring.</p>
         </div>
-        ${['supervisor', 'coordinator'].includes(state.currentUser.role) ? `
+        ${(state.currentUser.role === 'supervisor' || isExecutiveRole(state.currentUser.role)) ? `
           <button onclick="showStudentEvaluationModal('${p.id}')" class="bg-amber-600 hover:bg-amber-700 text-white font-bold px-3.5 py-2 rounded-xl text-xs shadow-sm transition-all flex items-center gap-1.5 shrink-0 self-start sm:self-auto">
             <i class="fas fa-award"></i> Evaluate Student
           </button>
@@ -2433,8 +2563,12 @@ async function handleGalleryUpload(projectId, event) {
 }
 
 async function uploadProjectImage(projectId, file) {
-  if (!file || !file.type.startsWith('image/')) { showToast('Please choose an image file', 'error'); return; }
-  if (file.size > 1000 * 1024) { showToast('Image too large (max 1MB)', 'error'); return; }
+  if (!validateUploadedFile(file, {
+    allowedMimeTypes: ['image/png', 'image/jpeg', 'image/webp'],
+    allowedExtensions: ['.png', '.jpg', '.jpeg', '.webp'],
+    maxBytes: 1000 * 1024,
+    label: 'project image'
+  })) return;
   const captionEl = document.getElementById('gallery-caption');
   const caption = captionEl ? captionEl.value.trim() : '';
   const reader = new FileReader();
@@ -2491,7 +2625,7 @@ function openLightbox(projectId, mediaId) {
   const p = state.selectedProject;
   const media = (p.media || []).find(m => m.id === mediaId);
   if (!media) return;
-  const isExec = ['coordinator', 'supervisor'].includes(state.currentUser.role);
+  const isExec = isExecutiveRole(state.currentUser.role) || state.currentUser.role === 'supervisor';
   const overlay = document.createElement('div');
   overlay.id = 'lightbox-overlay';
   overlay.className = 'fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4';
@@ -2571,7 +2705,7 @@ function renderSupervisors() {
         <h1 class="text-2xl font-bold text-gray-900">Supervisors</h1>
         <p class="text-gray-500 text-xs sm:text-sm mt-0.5">Faculty supervision directory & capacity allocation</p>
       </div>
-      ${state.currentUser.role === 'coordinator' ? `
+      ${isExecutiveRole(state.currentUser.role) ? `
         <div class="flex flex-wrap gap-2 self-start sm:self-auto">
           <button onclick="showAddSupervisorModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all shadow-md flex items-center gap-1.5">
             <i class="fas fa-plus-circle"></i> Add New Supervisor
@@ -2583,7 +2717,7 @@ function renderSupervisors() {
       ` : ''}
     </div>
 
-    ${state.currentUser.role === 'coordinator' ? `
+    ${isExecutiveRole(state.currentUser.role) ? `
     <div class="bg-gradient-to-r from-purple-900 via-indigo-900 to-slate-900 text-white rounded-2xl p-4 sm:p-5 shadow-xl border border-purple-500/20 space-y-4">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div class="flex items-start sm:items-center gap-3 min-w-0 flex-1">
@@ -3082,6 +3216,61 @@ function initSupervisorsChart(supervisors) {
 
 // ===== Data Loading Functions =====
 
+async function loadAuditLogs() {
+  try {
+    const res = await api('/audit/logs');
+    const logs = res.data || [];
+    const container = document.getElementById('audit-logs-container');
+    if (!container) return;
+
+    if (!logs.length) {
+      container.innerHTML = '<p class="text-sm text-gray-500">No audit events recorded yet.</p>';
+      return;
+    }
+
+    container.innerHTML = `
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-left text-xs">
+          <thead>
+            <tr class="border-b border-gray-200 text-gray-600">
+              <th class="py-2 pr-3 font-bold">Time</th>
+              <th class="py-2 pr-3 font-bold">Actor</th>
+              <th class="py-2 pr-3 font-bold">Action</th>
+              <th class="py-2 pr-3 font-bold">Entity</th>
+              <th class="py-2 pr-3 font-bold">Details</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${logs.map(log => `
+              <tr class="border-b border-gray-100 align-top">
+                <td class="py-2 pr-3 text-gray-500 whitespace-nowrap">${new Date(log.created_at).toLocaleString()}</td>
+                <td class="py-2 pr-3">
+                  <div class="font-semibold text-gray-800">${log.actor_role || 'system'}</div>
+                  <div class="text-[10px] text-gray-500">${log.actor_id || 'system'}</div>
+                </td>
+                <td class="py-2 pr-3">
+                  <span class="inline-flex items-center rounded-full bg-violet-100 text-violet-700 px-2 py-0.5 font-bold uppercase tracking-wide">${log.action}</span>
+                </td>
+                <td class="py-2 pr-3 text-gray-600">${log.entity_type || '—'}<div class="text-[10px] text-gray-400">${log.entity_id || '—'}</div></td>
+                <td class="py-2 pr-3 text-gray-700 max-w-md">${log.details || '—'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    console.error('Failed to load audit logs:', e);
+    const container = document.getElementById('audit-logs-container');
+    if (container) container.innerHTML = '<p class="text-sm text-rose-600">Unable to load audit logs.</p>';
+  }
+}
+
+function exportAuditLogs() {
+  if (!isAuditAccessRole(state.currentUser?.role)) return;
+  window.open('/api/audit/logs/export?format=csv', '_blank');
+}
+
 async function loadDashboard() {
   try {
     const [stats, proposals, projects] = await Promise.all([
@@ -3094,7 +3283,7 @@ async function loadDashboard() {
     state.proposals = proposals.data || [];
     state.projects = projects.data || [];
 
-    if (state.currentUser && state.currentUser.role === 'coordinator') {
+    if (state.currentUser && isExecutiveRole(state.currentUser.role)) {
       loadPendingUsers();
     }
 
@@ -3251,7 +3440,7 @@ async function loadProjectDetail(id) {
 
 async function loadSupervisors() {
   try {
-    if (state.currentUser && state.currentUser.role === 'coordinator') {
+    if (state.currentUser && isExecutiveRole(state.currentUser.role)) {
       loadPendingUsers();
     }
     const res = await api('/users?role=supervisor');
@@ -3294,8 +3483,8 @@ function renderGroups() {
   <div class="fade-in space-y-6">
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
       <div>
-        <h1 class="text-2xl font-bold text-gray-900">${role === 'coordinator' ? 'Student Groups' : 'My Group'}</h1>
-        <p class="text-gray-500 text-xs sm:text-sm mt-0.5">${role === 'coordinator' ? 'Review and approve FYP student teams (max 4 members each)' : 'Your FYP team — get it approved to submit one joint proposal'}</p>
+        <h1 class="text-2xl font-bold text-gray-900">${isExecutiveRole(role) ? 'Student Groups' : 'My Group'}</h1>
+        <p class="text-gray-500 text-xs sm:text-sm mt-0.5">${isExecutiveRole(role) ? 'Review and approve FYP student teams (max 4 members each)' : 'Your FYP team — get it approved to submit one joint proposal'}</p>
       </div>
       ${role === 'student' ? `
       <button onclick="showCreateGroupModal()" class="bg-fypilot-600 hover:bg-fypilot-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-md shadow-fypilot-500/20 transition-all flex items-center justify-center gap-2">
@@ -3317,10 +3506,10 @@ function renderGroupProfile() {
     rejected: 'bg-rose-100 text-rose-700 border-rose-200'
   };
   const members = g.members || [];
-  const isExecutive = ['coordinator', 'supervisor'].includes(state.currentUser.role);
+  const isExecutive = isExecutiveRole(state.currentUser.role) || state.currentUser.role === 'supervisor';
   const isLeader = state.currentUser.role === 'student' && state.currentUser.id === g.leader_id;
   const canManage = isLeader && g.status === 'pending';
-  const canDelete = (isLeader && g.status !== 'approved') || state.currentUser.role === 'coordinator';
+  const canDelete = (isLeader && g.status !== 'approved') || isExecutiveRole(state.currentUser.role);
 
   return `
   <div class="fade-in space-y-6">
@@ -3414,7 +3603,7 @@ function renderProfile() {
         </button>
       </div>
     </div>
-    <input type="file" id="avatar-file-input" accept="image/*" class="hidden" onchange="handleAvatarUpload(event)" />
+    <input type="file" id="avatar-file-input" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" class="hidden" onchange="handleAvatarUpload(event)" />
     <div id="profile-content" class="grid grid-cols-1 lg:grid-cols-2 gap-6">Loading...</div>
   </div>`;
 }
@@ -3428,8 +3617,12 @@ async function handleAvatarUpload(e) {
   const file = e.target.files && e.target.files[0];
   e.target.value = '';
   if (!file) return;
-  if (!file.type.startsWith('image/')) { showToast('Please choose an image file', 'error'); return; }
-  if (file.size > 400 * 1024) { showToast('Image too large (max 400KB)', 'error'); return; }
+  if (!validateUploadedFile(file, {
+    allowedMimeTypes: ['image/png', 'image/jpeg', 'image/webp'],
+    allowedExtensions: ['.png', '.jpg', '.jpeg', '.webp'],
+    maxBytes: 2 * 1024 * 1024,
+    label: 'profile photo'
+  })) return;
   const reader = new FileReader();
   reader.onload = async () => {
     try {
@@ -3535,7 +3728,7 @@ async function loadGroups() {
 
 function renderGroupCard(g) {
   const statusColors = { pending: 'bg-amber-100 text-amber-700 border-amber-200', approved: 'bg-emerald-100 text-emerald-700 border-emerald-200', rejected: 'bg-rose-100 text-rose-700 border-rose-200' };
-  const isExecutive = ['coordinator', 'supervisor'].includes(state.currentUser.role);
+  const isExecutive = isExecutiveRole(state.currentUser.role) || state.currentUser.role === 'supervisor';
   return `
   <div class="bg-white rounded-2xl border border-gray-200 p-4 sm:p-5 shadow-sm hover:shadow-md transition-all">
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -3583,6 +3776,13 @@ async function loadMyGroup() {
   }
 }
 
+function hasProposalForCurrentGroup() {
+  if (!state.currentUser || state.currentUser.role !== 'student') return false;
+  const groupId = state.myGroup && state.myGroup.id ? state.myGroup.id : null;
+  if (!groupId) return false;
+  return (state.proposals || []).some(p => String(p.group_id) === String(groupId));
+}
+
 function renderProposalGroupBanner() {
   const banner = document.getElementById('proposal-group-banner');
   if (!banner) return;
@@ -3592,6 +3792,14 @@ function renderProposalGroupBanner() {
       <div class="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 text-xs text-amber-700 flex items-start gap-2">
         <i class="fas fa-exclamation-triangle mt-0.5"></i>
         <span>You are not in a group yet. <button onclick="navigate('groups')" class="underline font-bold">Create a group</button> — only the leader of an <b>approved</b> group can submit a proposal.</span>
+      </div>`;
+    return;
+  }
+  if (hasProposalForCurrentGroup()) {
+    banner.innerHTML = `
+      <div class="bg-slate-100 border border-slate-200 rounded-2xl p-3.5 text-xs text-slate-700 flex items-start gap-2">
+        <i class="fas fa-lock mt-0.5"></i>
+        <span>This group already has a proposal. New proposals are locked, and the submitted details cannot be changed after registration.</span>
       </div>`;
     return;
   }
@@ -3979,6 +4187,11 @@ function showNewProposalForm() {
     navigate('groups');
     return;
   }
+  if (hasProposalForCurrentGroup()) {
+    showToast('This group already has a proposal. A new proposal cannot be created after registration.', 'error');
+    navigate('proposals');
+    return;
+  }
   if (g.status !== 'approved') {
     showToast(`Your group "${g.name}" is ${g.status}. Wait for coordinator approval before submitting.`, 'warning');
     return;
@@ -3991,17 +4204,23 @@ function showNewProposalForm() {
   const container = document.getElementById('proposals-list');
   if (!container) return;
 
+  const defaultProposalTitle = (state.proposals || []).find(p => String(p.group_id) === String(g.id))?.title || `${g.name} Project`;
+
   container.innerHTML = `
   <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm fade-in max-w-2xl mx-auto">
     <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 mb-4 text-xs text-emerald-700 flex items-start gap-2">
       <i class="fas fa-users mt-0.5"></i>
-      <span>Submitting on behalf of group <b>"${g.name}"</b> — this proposal will cover all group members.</span>
+      <span>Submitting on behalf of group <b>"${g.name}"</b> — this proposal uses the original registration details for the group and project.</span>
     </div>
     <h2 class="text-lg font-bold text-gray-900 mb-4">Submit New FYP Proposal</h2>
     <form id="new-proposal-form" class="space-y-4">
       <div>
-        <label class="block text-xs font-semibold text-gray-700 mb-1">Project Title *</label>
-        <input name="title" required class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none" placeholder="e.g. AI-Powered Smart Traffic System" />
+        <label class="block text-xs font-semibold text-gray-700 mb-1">Group Name</label>
+        <input value="${escapeHtml(g.name)}" readonly class="w-full border border-gray-200 bg-gray-50 rounded-xl px-3 py-2 text-sm text-gray-700" />
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-gray-700 mb-1">Project Title</label>
+        <input name="title" value="${escapeHtml(defaultProposalTitle)}" required readonly class="w-full border border-gray-200 bg-gray-50 rounded-xl px-3 py-2 text-sm text-gray-700" />
       </div>
       <div>
         <label class="block text-xs font-semibold text-gray-700 mb-1">Abstract</label>
@@ -4049,14 +4268,22 @@ function showNewProposalForm() {
 // ===== Chat Module (WhatsApp-style 1:1 Messaging) =====
 function canChatWith(fromRole, toRole) {
   if (!fromRole || !toRole) return false;
-  if (fromRole === 'coordinator') return true;
-  if (fromRole === 'supervisor') return toRole === 'student' || toRole === 'coordinator';
-  if (fromRole === 'student') return toRole === 'supervisor' || toRole === 'coordinator';
+  const fromExec = isExecutiveRole(fromRole);
+  const toExec = isExecutiveRole(toRole);
+  if (fromExec) return true;
+  if (fromRole === 'supervisor') return toRole === 'student' || toExec;
+  if (fromRole === 'student') return toRole === 'supervisor' || toExec;
   return false;
 }
 
 function chatRoleColor(role) {
-  return { coordinator: 'from-purple-500 to-indigo-600', supervisor: 'from-blue-500 to-fypilot-600', student: 'from-emerald-500 to-teal-600' }[role] || 'from-gray-500 to-gray-600';
+  return {
+    coordinator: 'from-purple-500 to-indigo-600',
+    hod: 'from-violet-500 to-indigo-600',
+    dean: 'from-fuchsia-500 to-violet-700',
+    supervisor: 'from-blue-500 to-fypilot-600',
+    student: 'from-emerald-500 to-teal-600'
+  }[role] || 'from-gray-500 to-gray-600';
 }
 
 function chatAvatar(p, size = 'w-10 h-10 text-sm') {
@@ -4145,7 +4372,7 @@ function renderChats() {
         ${hasActive ? renderChatHeader() + renderChatMessagesArea() + renderChatComposer() : renderChatEmptyState()}
       </div>
     </div>
-    <input type="file" id="chat-image-input" accept="image/*" class="hidden" onchange="handleChatImagePick(event)" />
+    <input type="file" id="chat-image-input" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" class="hidden" onchange="handleChatImagePick(event)" />
   </div>`;
 }
 
@@ -4212,7 +4439,7 @@ function renderChatHeader() {
     <div class="flex-1 min-w-0">
       <div class="flex items-center gap-2">
         <h3 class="font-bold text-gray-900 truncate">${escapeHtml(p.name)}</h3>
-        <span class="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider capitalize ${p.role === 'coordinator' ? 'bg-purple-100 text-purple-700' : p.role === 'supervisor' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}">${p.role}</span>
+        <span class="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider capitalize ${p.role === 'coordinator' ? 'bg-purple-100 text-purple-700' : p.role === 'hod' ? 'bg-violet-100 text-violet-700' : p.role === 'dean' ? 'bg-fuchsia-100 text-fuchsia-700' : p.role === 'supervisor' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}">${p.role}</span>
       </div>
       <p id="chat-header-status" class="text-xs flex items-center gap-1.5">${chatHeaderStatusHtml()}</p>
     </div>
@@ -4723,8 +4950,12 @@ function handleChatImagePick(e) {
   const file = e.target.files && e.target.files[0];
   e.target.value = '';
   if (!file) return;
-  if (!file.type.startsWith('image/')) { showToast('Please choose an image file', 'error'); return; }
-  if (file.size > 1.2 * 1024 * 1024) { showToast('Image too large (max 1.2MB)', 'error'); return; }
+  if (!validateUploadedFile(file, {
+    allowedMimeTypes: ['image/png', 'image/jpeg', 'image/webp'],
+    allowedExtensions: ['.png', '.jpg', '.jpeg', '.webp'],
+    maxBytes: 1.2 * 1024 * 1024,
+    label: 'chat image'
+  })) return;
   const reader = new FileReader();
   reader.onload = () => {
     state.chatPendingMedia = { type: 'image', data: reader.result, mime: file.type };
@@ -4896,7 +5127,7 @@ function renderNewChatResults() {
       <div class="flex-1 min-w-0">
         <div class="flex items-center gap-2">
           <span class="font-semibold text-sm text-gray-900 truncate">${escapeHtml(u.name)}</span>
-          <span class="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider capitalize ${u.role === 'coordinator' ? 'bg-purple-100 text-purple-700' : u.role === 'supervisor' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}">${u.role}</span>
+          <span class="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider capitalize ${u.role === 'coordinator' ? 'bg-purple-100 text-purple-700' : u.role === 'hod' ? 'bg-violet-100 text-violet-700' : u.role === 'dean' ? 'bg-fuchsia-100 text-fuchsia-700' : u.role === 'supervisor' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}">${u.role}</span>
         </div>
         <p class="text-xs text-gray-500 truncate">${escapeHtml(u.email || '')}${existing.has(u.id) ? ' · <span class="text-emerald-500 font-semibold">existing chat</span>' : ''}</p>
       </div>
@@ -5047,9 +5278,639 @@ function closeChatOnMobile() {
   render();
 }
 
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Unable to read file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function validateUploadedFile(file, { allowedMimeTypes = [], allowedExtensions = [], maxBytes = null, label = 'file' } = {}) {
+  if (!file) {
+    showToast(`${label} is required.`, 'error');
+    return false;
+  }
+
+  const mime = (file.type || '').toLowerCase();
+  const name = (file.name || '').toLowerCase();
+  const extension = name.includes('.') ? name.slice(name.lastIndexOf('.')) : '';
+  const allowedMimeSet = allowedMimeTypes.map(type => type.toLowerCase());
+  const allowedExtSet = allowedExtensions.map(ext => ext.toLowerCase());
+  const mimeAllowed = allowedMimeSet.length === 0 || allowedMimeSet.includes(mime);
+  const extAllowed = allowedExtSet.length === 0 || allowedExtSet.includes(extension);
+
+  if (!mimeAllowed && !extAllowed) {
+    const allowedText = allowedExtensions.length ? allowedExtensions.join(', ') : (allowedMimeTypes.length ? allowedMimeTypes.join(', ') : 'the required format');
+    showToast(`Only ${allowedText} files are allowed for ${label}.`, 'error');
+    return false;
+  }
+
+  if (maxBytes && file.size > maxBytes) {
+    const sizeLabel = maxBytes >= 1024 * 1024 ? `${(maxBytes / (1024 * 1024)).toFixed(1)}MB` : `${Math.round(maxBytes / 1024)}KB`;
+    showToast(`${label} is too large (max ${sizeLabel}).`, 'error');
+    return false;
+  }
+
+  return true;
+}
+
+async function loadDefense() {
+  if (state.defenseLoading) return;
+  state.defenseLoading = true;
+  try {
+    const res = await api('/defense');
+    state.defenseConfig = res.data && res.data.config ? res.data.config : null;
+    state.defenseSubmissions = res.data && res.data.submissions ? res.data.submissions : [];
+    if (state.currentUser && state.currentUser.role === 'student' && !state.myGroup) {
+      await loadMyGroup();
+    }
+    if (state.currentView === 'defense') render();
+  } catch (e) {
+    console.error('Failed to load defense data:', e);
+  } finally {
+    state.defenseLoading = false;
+  }
+}
+
+async function submitDefenseConfig() {
+  const form = document.getElementById('defense-config-form');
+  if (!form) return;
+  const payload = {
+    title: document.getElementById('defense-title')?.value || 'Final Defense',
+    submission_deadline: document.getElementById('defense-deadline')?.value || null,
+    presentation_start: document.getElementById('defense-start')?.value || '09:00',
+    presentation_end: document.getElementById('defense-end')?.value || '17:00',
+    default_duration_minutes: Number(document.getElementById('defense-duration')?.value || 15)
+  };
+
+  try {
+    const res = await api('/defense/config', { method: 'POST', body: JSON.stringify(payload) });
+    showToast(res.message || 'Defense deadline saved!', 'success');
+    await loadDefense();
+  } catch (e) {
+    console.error('Failed to save defense config', e);
+  }
+}
+
+function getDefenseInputByKey(fieldKey) {
+  const idCandidates = [
+    `defense-${fieldKey}-file`,
+    fieldKey === 'pptxPdf' ? 'defense-pptx-pdf-file' : fieldKey === 'docxPdf' ? 'defense-docx-pdf-file' : `defense-${fieldKey}-file`,
+    fieldKey === 'pptxPdf' ? 'defense-pptxPdf-file' : fieldKey === 'docxPdf' ? 'defense-docxPdf-file' : `defense-${fieldKey}-file`,
+    `data-defense-field="${fieldKey}"`
+  ];
+
+  for (const candidate of idCandidates) {
+    if (candidate.startsWith('data-defense-field=')) {
+      const element = document.querySelector(`[data-defense-field="${fieldKey}"]`);
+      if (element) return element;
+    } else {
+      const element = document.getElementById(candidate);
+      if (element) return element;
+    }
+  }
+
+  return null;
+}
+
+function validateDefenseFileInput(file, fieldKey) {
+  const rules = {
+    pptx: { label: 'PPTX', allowedMimeTypes: ['application/vnd.openxmlformats-officedocument.presentationml.presentation', 'application/vnd.ms-powerpoint'], allowedExtensions: ['.pptx', '.ppt'], maxBytes: 100 * 1024 * 1024 },
+    pptxPdf: { label: 'PPTX PDF', allowedMimeTypes: ['application/pdf'], allowedExtensions: ['.pdf'], maxBytes: 100 * 1024 * 1024 },
+    docx: { label: 'DOCX', allowedMimeTypes: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/msword'], allowedExtensions: ['.docx', '.doc'], maxBytes: 100 * 1024 * 1024 },
+    docxPdf: { label: 'DOCX PDF', allowedMimeTypes: ['application/pdf'], allowedExtensions: ['.pdf'], maxBytes: 100 * 1024 * 1024 },
+  };
+
+  const rule = rules[fieldKey];
+  if (!rule) return true;
+  if (!file) return false;
+
+  const valid = validateUploadedFile(file, rule);
+  if (!valid) {
+    const input = document.getElementById(`defense-${fieldKey}-file`);
+    if (input) input.value = '';
+    const matchBadge = document.getElementById(`defense-match-${fieldKey}`);
+    if (matchBadge) {
+      matchBadge.textContent = 'Invalid format';
+      matchBadge.className = 'mt-1 text-[10px] font-semibold text-rose-600 min-h-[14px]';
+    }
+    return false;
+  }
+
+  const matchBadge = document.getElementById(`defense-match-${fieldKey}`);
+  if (matchBadge) {
+    matchBadge.textContent = 'Format valid ✓';
+    matchBadge.className = 'mt-1 text-[10px] font-semibold text-emerald-600 min-h-[14px]';
+  }
+
+  return true;
+}
+
+async function submitDefenseUpload() {
+  const role = state.currentUser && state.currentUser.role;
+  if (role !== 'student') {
+    showToast('Only students can upload defense files.', 'error');
+    return;
+  }
+
+  const group = state.myGroup || null;
+  if (!group) {
+    showToast('Join or create an approved group before uploading defense documents.', 'error');
+    return;
+  }
+  if (String(group.leader_id || '') !== String(state.currentUser.id)) {
+    showToast('Only the group leader can upload defense files.', 'error');
+    return;
+  }
+
+  const inputs = {
+    pptx: getDefenseInputByKey('pptx'),
+    pptxPdf: getDefenseInputByKey('pptxPdf'),
+    docx: getDefenseInputByKey('docx'),
+    docxPdf: getDefenseInputByKey('docxPdf')
+  };
+
+  const fileChecks = [
+    { file: inputs.pptx && inputs.pptx.files && inputs.pptx.files[0], fieldKey: 'pptx', label: 'PPTX', allowedMimeTypes: ['application/vnd.openxmlformats-officedocument.presentationml.presentation', 'application/vnd.ms-powerpoint'], allowedExtensions: ['.pptx', '.ppt'], maxBytes: 100 * 1024 * 1024 },
+    { file: inputs.pptxPdf && inputs.pptxPdf.files && inputs.pptxPdf.files[0], fieldKey: 'pptxPdf', label: 'PPTX PDF', allowedMimeTypes: ['application/pdf'], allowedExtensions: ['.pdf'], maxBytes: 100 * 1024 * 1024 },
+    { file: inputs.docx && inputs.docx.files && inputs.docx.files[0], fieldKey: 'docx', label: 'DOCX', allowedMimeTypes: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/msword'], allowedExtensions: ['.docx', '.doc'], maxBytes: 100 * 1024 * 1024 },
+    { file: inputs.docxPdf && inputs.docxPdf.files && inputs.docxPdf.files[0], fieldKey: 'docxPdf', label: 'DOCX PDF', allowedMimeTypes: ['application/pdf'], allowedExtensions: ['.pdf'], maxBytes: 100 * 1024 * 1024 },
+  ];
+
+  const missingFiles = fileChecks.filter(({ file }) => !file);
+  if (missingFiles.length) {
+    showToast('Please upload all four defense files: PPTX, PPTX PDF, DOCX, DOCX PDF.', 'error');
+    return;
+  }
+
+  const invalid = fileChecks.find(item => !validateDefenseFileInput(item.file, item.fieldKey));
+  if (invalid) return;
+
+  const files = {
+    pptx_file: await fileToDataUrl(fileChecks[0].file),
+    pptx_pdf_file: await fileToDataUrl(fileChecks[1].file),
+    docx_file: await fileToDataUrl(fileChecks[2].file),
+    docx_pdf_file: await fileToDataUrl(fileChecks[3].file),
+  };
+
+  const names = {
+    pptx_name: fileChecks[0].file.name,
+    pptx_pdf_name: fileChecks[1].file.name,
+    docx_name: fileChecks[2].file.name,
+    docx_pdf_name: fileChecks[3].file.name,
+  };
+
+  try {
+    const res = await api('/defense/upload', {
+      method: 'POST',
+      body: JSON.stringify({
+        group_id: group.id,
+        group_name: group.name,
+        project_id: group.project_id || null,
+        ...files,
+        ...names,
+        notes: document.getElementById('defense-notes')?.value || ''
+      })
+    });
+    showToast(res.message || 'Defense documents submitted successfully.', 'success');
+    await loadDefense();
+  } catch (e) {
+    console.error('Failed to upload defense files:', e);
+    showToast(e && e.message ? e.message : 'Defense upload failed. Please check the selected files and try again.', 'error');
+  }
+}
+
+function formatDefenseInputDate(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function formatDefenseInputTime(value) {
+  if (!value) return '09:00';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '09:00';
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
+}
+
+function buildDefenseDateTime(dateValue, timeValue, durationMinutes = 15) {
+  if (!dateValue || !timeValue) return null;
+  const [year, month, day] = String(dateValue).split('-').map(Number);
+  const [hours, minutes] = String(timeValue).split(':').map(Number);
+  if (!year || !month || !day || Number.isNaN(hours) || Number.isNaN(minutes)) return null;
+
+  const start = new Date(year, month - 1, day, hours, minutes, 0, 0);
+  const end = new Date(start.getTime() + (Number(durationMinutes) || 15) * 60000);
+  return {
+    start_time: start.toISOString(),
+    end_time: end.toISOString(),
+  };
+}
+
+function getDefenseSlotConflict(groupId, dateValue, timeValue, durationMinutes = 15) {
+  const slot = buildDefenseDateTime(dateValue, timeValue, durationMinutes);
+  if (!slot) return null;
+
+  const candidateStart = new Date(slot.start_time);
+  const candidateEnd = new Date(slot.end_time);
+
+  const otherGroups = (state.defenseSubmissions || []).filter(sub => String(sub.group_id) !== String(groupId));
+  const conflict = otherGroups.find(sub => {
+    if (!sub.slot_start || !sub.slot_end) return false;
+    const existingStart = new Date(sub.slot_start);
+    const existingEnd = new Date(sub.slot_end);
+    return candidateStart < existingEnd && candidateEnd > existingStart;
+  });
+
+  if (!conflict) return null;
+  return {
+    groupName: conflict.group_name || 'Another group',
+    start: conflict.slot_start,
+    end: conflict.slot_end,
+  };
+}
+
+function updateDefenseSlotConflictStatus(groupId, durationMinutes = 15) {
+  const dateInput = document.getElementById(`defense-date-${groupId}`);
+  const timeInput = document.getElementById(`defense-time-${groupId}`);
+  const statusEl = document.getElementById(`defense-conflict-${groupId}`);
+  if (!dateInput || !timeInput || !statusEl) return;
+
+  const conflict = getDefenseSlotConflict(groupId, dateInput.value, timeInput.value, durationMinutes);
+  if (!conflict) {
+    statusEl.textContent = 'No overlap with other groups.';
+    statusEl.className = 'mt-1 text-[10px] font-semibold text-emerald-600';
+    return;
+  }
+
+  const label = conflict.start ? new Date(conflict.start).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'another time';
+  statusEl.textContent = `Conflict: overlaps ${conflict.groupName} at ${label}.`;
+  statusEl.className = 'mt-1 text-[10px] font-semibold text-red-600';
+}
+
+async function saveDefenseSlotForGroup(groupId, slotId, durationMinutes) {
+  const dateValue = document.getElementById(`defense-date-${groupId}`)?.value;
+  const timeValue = document.getElementById(`defense-time-${groupId}`)?.value;
+  const conflict = getDefenseSlotConflict(groupId, dateValue, timeValue, durationMinutes);
+
+  if (conflict) {
+    showToast('Conflict: this time overlaps ' + conflict.groupName + '. Please choose a different slot.', 'error');
+    return;
+  }
+
+  const slot = buildDefenseDateTime(dateValue, timeValue, durationMinutes);
+  if (!slot) {
+    showToast('Please choose a valid date and time.', 'error');
+    return;
+  }
+
+  await updateDefenseSlot(slotId, {
+    group_id: groupId,
+    status: 'scheduled',
+    start_time: slot.start_time,
+    end_time: slot.end_time,
+    duration_minutes: durationMinutes,
+  });
+}
+
+async function updateDefenseSlot(slotId, payload) {
+  try {
+    const res = await api(`/defense/slots/${slotId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+    showToast(res.message || 'Defense slot updated successfully.', 'success');
+    await loadDefense();
+  } catch (e) {
+    console.error('Failed to update defense slot:', e);
+  }
+}
+
+async function ensureZipLibrary() {
+  if (window.JSZip) return window.JSZip;
+
+  await new Promise((resolve, reject) => {
+    const existing = document.querySelector('script[data-defense-zip="true"]');
+    if (existing) {
+      existing.addEventListener('load', resolve, { once: true });
+      existing.addEventListener('error', reject, { once: true });
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js';
+    script.async = true;
+    script.setAttribute('data-defense-zip', 'true');
+    script.onload = resolve;
+    script.onerror = reject;
+    document.head.appendChild(script);
+  });
+
+  return window.JSZip;
+}
+
+function dataUrlToUint8Array(dataUrl) {
+  const base64 = dataUrl.split(',')[1];
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+async function downloadDefenseDocuments(groupId) {
+  try {
+    const res = await api(`/defense/groups/${groupId}/download`);
+    const documents = res.data && res.data.documents ? res.data.documents : [];
+    if (!documents.length) {
+      showToast('No defense documents available for this group.', 'warning');
+      return;
+    }
+
+    const groupName = (res.data && res.data.group_name) || 'defense-files';
+    const safeName = String(groupName).replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') || 'defense-files';
+    const JSZip = await ensureZipLibrary();
+    const zip = new JSZip();
+    const folder = zip.folder(safeName) || zip;
+
+    documents.forEach((doc) => {
+      if (!doc || !doc.data_url || !doc.file_name) return;
+      const fileName = String(doc.file_name).replace(/\\/g, '/').split('/').pop();
+      folder.file(fileName, dataUrlToUint8Array(doc.data_url), { binary: true });
+    });
+
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${safeName}-defense-files.zip`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    showToast(`${documents.length} defense files downloaded as a single folder bundle.`, 'success');
+  } catch (e) {
+    console.error('Failed to download defense documents:', e);
+    showToast('Defense download failed. Please try again.', 'error');
+  }
+}
+
+async function downloadAllDefenseDocuments() {
+  const submissions = state.defenseSubmissions || [];
+  if (!submissions.length) {
+    showToast('No defense submissions are available to download yet.', 'warning');
+    return;
+  }
+
+  try {
+    const JSZip = await ensureZipLibrary();
+    const zip = new JSZip();
+    let totalFiles = 0;
+
+    submissions.forEach((sub) => {
+      if (!sub || !sub.group_id) return;
+      const groupFolderName = String(sub.group_name || sub.group_id || 'group').replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') || 'group';
+      const groupFolder = zip.folder(groupFolderName) || zip;
+      const documents = [
+        { file_name: `${groupFolderName}-pptx.pptx`, data_url: sub.pptx_file },
+        { file_name: `${groupFolderName}-pptx.pdf`, data_url: sub.pptx_pdf_file },
+        { file_name: `${groupFolderName}-docx.docx`, data_url: sub.docx_file },
+        { file_name: `${groupFolderName}-docx.pdf`, data_url: sub.docx_pdf_file },
+      ].filter((doc) => doc.data_url);
+
+      documents.forEach((doc) => {
+        groupFolder.file(doc.file_name, dataUrlToUint8Array(doc.data_url), { binary: true });
+        totalFiles += 1;
+      });
+    });
+
+    if (!totalFiles) {
+      showToast('No defense documents are available to download.', 'warning');
+      return;
+    }
+
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'all-defense-submissions.zip';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    showToast(`${totalFiles} defense files downloaded in one archive.`, 'success');
+  } catch (e) {
+    console.error('Failed to download all defense documents:', e);
+    showToast('Bulk defense download failed. Please try again.', 'error');
+  }
+}
+
+function renderDefense() {
+  const role = state.currentUser ? state.currentUser.role : 'guest';
+  const reviewRole = isExecutiveRole(role) || role === 'supervisor';
+  const isLeaderOfMyGroup = role === 'student' && state.myGroup && String(state.myGroup.leader_id || '') === String(state.currentUser.id);
+  const config = state.defenseConfig || {
+    title: 'Final Defense',
+    submission_deadline: '',
+    presentation_start: '09:00',
+    presentation_end: '17:00',
+    default_duration_minutes: 15
+  };
+
+  const submissions = state.defenseSubmissions || [];
+  const myGroupSubmission = role === 'student' && state.myGroup ? submissions.find(s => String(s.group_id) === String(state.myGroup.id)) : null;
+
+  const coordinatorPanel = `
+    <div class="space-y-6">
+      <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+        <div class="flex items-center justify-between gap-3 mb-4">
+          <h2 class="text-lg font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-calendar-check text-purple-600"></i> Defense Configuration</h2>
+          <div class="flex flex-wrap gap-2">
+            <button onclick="downloadAllDefenseDocuments()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-xl text-xs font-bold">Download All Groups</button>
+            <button onclick="loadDefense()" class="text-xs font-bold text-purple-700 hover:bg-purple-50 border border-purple-200 rounded-lg px-3 py-2">Refresh</button>
+          </div>
+        </div>
+        <form id="defense-config-form" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="md:col-span-2">
+            <label class="block text-xs font-bold text-gray-700 mb-1">Defense Title</label>
+            <input id="defense-title" value="${escapeHtml(config.title || 'Final Defense')}" class="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-gray-700 mb-1">Submission Deadline</label>
+            <input id="defense-deadline" type="datetime-local" value="${config.submission_deadline ? new Date(config.submission_deadline).toISOString().slice(0, 16) : ''}" class="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-gray-700 mb-1">Duration (Minutes)</label>
+            <input id="defense-duration" type="number" min="10" max="60" value="${config.default_duration_minutes || 15}" class="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-gray-700 mb-1">Presentation Start</label>
+            <input id="defense-start" type="time" value="${config.presentation_start || '09:00'}" class="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-gray-700 mb-1">Presentation End</label>
+            <input id="defense-end" type="time" value="${config.presentation_end || '17:00'}" class="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm" />
+          </div>
+          <div class="md:col-span-2 flex flex-wrap gap-2">
+            <button type="button" onclick="submitDefenseConfig()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2.5 rounded-xl text-xs font-bold">Save Deadline</button>
+            <button type="button" onclick="api('/defense/auto-schedule', { method: 'POST' }).then(() => loadDefense()).catch(() => {})" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl text-xs font-bold">Auto-Schedule</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+        <h2 class="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2"><i class="fas fa-list-check text-indigo-600"></i> Submitted Groups</h2>
+        <div class="space-y-3">
+          ${submissions.length ? submissions.map((sub, index) => `
+            <div class="border border-gray-200 rounded-xl p-3.5 bg-gray-50">
+              <div class="flex flex-col gap-3">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                  <div>
+                    <div class="font-bold text-gray-900">#${index + 1} • ${escapeHtml(sub.group_name || 'Unknown Group')}</div>
+                    <div class="text-[11px] text-gray-500">${sub.slot_start ? `Assigned: ${new Date(sub.slot_start).toLocaleString([], {dateStyle:'medium', timeStyle:'short'})}` : 'Awaiting slot assignment'}</div>
+                  </div>
+                  <div class="flex flex-wrap gap-2">
+                    <button onclick="downloadDefenseDocuments('${sub.group_id}')" class="border border-gray-300 px-3 py-2 rounded-xl text-xs font-bold text-gray-700">Download</button>
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
+                  <div>
+                    <label class="block text-[10px] font-bold text-gray-600 mb-1">Date</label>
+                    <input id="defense-date-${sub.group_id}" type="date" value="${formatDefenseInputDate(sub.slot_start || '')}" oninput="updateDefenseSlotConflictStatus('${sub.group_id}', ${config.default_duration_minutes || 15})" onchange="updateDefenseSlotConflictStatus('${sub.group_id}', ${config.default_duration_minutes || 15})" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm" />
+                  </div>
+                  <div>
+                    <label class="block text-[10px] font-bold text-gray-600 mb-1">Start Time</label>
+                    <input id="defense-time-${sub.group_id}" type="time" value="${formatDefenseInputTime(sub.slot_start || '2026-01-01T09:00:00')}" oninput="updateDefenseSlotConflictStatus('${sub.group_id}', ${config.default_duration_minutes || 15})" onchange="updateDefenseSlotConflictStatus('${sub.group_id}', ${config.default_duration_minutes || 15})" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm" />
+                  </div>
+                  <div>
+                    <div id="defense-conflict-${sub.group_id}" class="mt-1 text-[10px] font-semibold text-emerald-600">No overlap with other groups.</div>
+                    <button type="button" onclick="saveDefenseSlotForGroup('${sub.group_id}', '${sub.slot_id || sub.id}', ${config.default_duration_minutes || 15})" class="w-full mt-2 bg-blue-600 hover:bg-blue-700 text-white px-3 py-2.5 rounded-xl text-xs font-bold">Save Slot</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          `).join('') : `<div class="text-sm text-gray-500">No defense uploads yet.</div>`}
+        </div>
+      </div>
+    </div>
+  `;
+
+  const supervisorPanel = `
+    <div class="space-y-6">
+      <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+        <div class="flex items-center justify-between gap-3 mb-4">
+          <h2 class="text-lg font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-folder-open text-blue-600"></i> Defense Submissions</h2>
+          <button onclick="downloadAllDefenseDocuments()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-xl text-xs font-bold">Download All</button>
+        </div>
+        <div class="space-y-3">
+          ${submissions.length ? submissions.map(sub => `
+            <div class="border border-gray-200 rounded-xl p-3.5 bg-gray-50">
+              <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                <div>
+                  <div class="font-bold text-gray-900">${escapeHtml(sub.group_name || 'Unknown Group')}</div>
+                  <div class="text-[11px] text-gray-500">${sub.slot_start ? `Scheduled: ${new Date(sub.slot_start).toLocaleString([], {dateStyle:'medium', timeStyle:'short'})}` : 'Pending schedule'}</div>
+                </div>
+                <button onclick="downloadDefenseDocuments('${sub.group_id}')" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-xl text-xs font-bold">View & Download</button>
+              </div>
+            </div>
+          `).join('') : `<div class="text-sm text-gray-500">No group has uploaded defense files yet.</div>`}
+        </div>
+      </div>
+    </div>
+  `;
+
+  const sharedReviewPanel = reviewRole ? supervisorPanel : '';
+
+  const studentPanel = `
+    <div class="space-y-6">
+      <div class="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-2xl p-4 text-sm text-emerald-800">
+        <div class="flex items-start gap-2">
+          <i class="fas fa-clipboard-check mt-1"></i>
+          <div>
+            <div class="font-bold">Final Defense Submission</div>
+            <div>Deadline: ${config.submission_deadline ? new Date(config.submission_deadline).toLocaleString([], {dateStyle:'medium', timeStyle:'short'}) : 'Not set yet'}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+        <h2 class="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2"><i class="fas fa-upload text-emerald-600"></i> Upload Defense Files</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          ${['pptx', 'pptxPdf', 'docx', 'docxPdf'].map(key => {
+            const labelMap = {
+              pptx: 'PPTX Presentation',
+              pptxPdf: 'PPTX PDF',
+              docx: 'DOCX Report',
+              docxPdf: 'DOCX PDF'
+            };
+            const acceptMap = {
+              pptx: '.pptx,.ppt,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-powerpoint',
+              pptxPdf: '.pdf,application/pdf',
+              docx: '.docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword',
+              docxPdf: '.pdf,application/pdf'
+            };
+            return `
+              <label class="block">
+                <span class="block text-xs font-bold text-gray-700 mb-1">${labelMap[key]}</span>
+                <div class="relative">
+                  <input id="defense-${key}-file" data-defense-field="${key}" type="file" accept="${acceptMap[key]}" onchange="if (event.target.files && event.target.files[0]) validateDefenseFileInput(event.target.files[0], '${key}')" class="block w-full text-sm text-gray-500 file:mr-3 file:rounded-xl file:border-0 file:bg-emerald-600 file:px-3 file:py-2 file:text-xs file:font-bold file:text-white" />
+                  <div id="defense-match-${key}" class="mt-1 text-[10px] font-semibold text-gray-500 min-h-[14px]">${key.endsWith('Pdf') ? 'PDF format required' : 'Correct format required'}</div>
+                </div>
+              </label>
+            `;
+          }).join('')}
+        </div>
+
+        <div class="mt-4">
+          <label class="block text-xs font-bold text-gray-700 mb-1">Notes</label>
+          <textarea id="defense-notes" rows="3" placeholder="Optional notes for the coordinator or supervisor" class="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm"></textarea>
+        </div>
+
+        <div class="mt-5 flex flex-wrap gap-2">
+          <button type="button" onclick="submitDefenseUpload()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl text-xs font-bold">Submit Defense</button>
+          ${myGroupSubmission ? `<button onclick="downloadDefenseDocuments('${myGroupSubmission.group_id}')" class="border border-gray-300 text-gray-700 px-4 py-2.5 rounded-xl text-xs font-bold">Download My Upload</button>` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+
+  return `
+    <div class="fade-in space-y-6">
+      <div class="bg-gradient-to-r from-slate-900 via-indigo-900 to-fypilot-900 text-white rounded-2xl p-6 shadow-xl border border-indigo-500/20">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <span class="inline-flex items-center gap-1.5 bg-white/10 border border-white/20 text-indigo-100 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">
+              <i class="fas fa-file-export"></i> Final Defense Workflow
+            </span>
+            <h1 class="text-2xl sm:text-3xl font-bold mt-2">Defense Management</h1>
+            <p class="text-indigo-200 text-sm mt-1">Students submit required files, supervisors review them, and coordinators manage final scheduling.</p>
+          </div>
+          <button onclick="loadDefense()" class="bg-white/10 hover:bg-white/20 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5 self-start">
+            <i class="fas fa-sync-alt"></i> Refresh
+          </button>
+        </div>
+      </div>
+
+      ${isExecutiveRole(role) ? `${coordinatorPanel}${sharedReviewPanel}` : role === 'supervisor' ? supervisorPanel : isLeaderOfMyGroup ? studentPanel : ''}
+    </div>
+  `;
+}
+
 // ===== Event Listeners =====
 function attachEventListeners() {
-  const isCoordinator = state.currentUser && state.currentUser.role === 'coordinator';
+  const isCoordinator = state.currentUser && isExecutiveRole(state.currentUser.role);
 
   attachProjectPaste();
 
@@ -5077,9 +5938,19 @@ function attachEventListeners() {
         if (state.currentView === 'dashboard') loadPendingUsers();
       }, 5000);
     }
+  } else if (state.currentView === 'audit-logs') {
+    loadAuditLogs();
   } else {
     if (state.currentView === 'proposals') { loadProposals(); loadMyGroup(); }
     if (state.currentView === 'projects') loadProjects();
+    if (state.currentView === 'defense') {
+      if (!state.defenseLoading) {
+        loadDefense();
+      }
+      if (state.currentUser && state.currentUser.role === 'student') {
+        loadMyGroup();
+      }
+    }
     if (state.currentView === 'supervisors') loadSupervisors();
     if (state.currentView === 'people') loadPeople();
     if (state.currentView === 'groups') loadGroups();
@@ -5093,7 +5964,7 @@ window.addEventListener('focus', () => {
     loadNotifications(true);
     sendPresence();
   }
-  if (state.currentView === 'dashboard' && state.currentUser && state.currentUser.role === 'coordinator') {
+  if (state.currentView === 'dashboard' && state.currentUser && isExecutiveRole(state.currentUser.role)) {
     loadPendingUsers();
   }
 });
@@ -5110,6 +5981,11 @@ window.openNotification = openNotification;
 window.markAllNotificationsRead = markAllNotificationsRead;
 window.loadProposalDetail = loadProposalDetail;
 window.loadProjectDetail = loadProjectDetail;
+window.loadDefense = loadDefense;
+window.submitDefenseConfig = submitDefenseConfig;
+window.submitDefenseUpload = submitDefenseUpload;
+window.updateDefenseSlot = updateDefenseSlot;
+window.downloadDefenseDocuments = downloadDefenseDocuments;
 window.approveUser = approveUser;
 window.rejectUser = rejectUser;
 window.loadPendingUsers = loadPendingUsers;
@@ -5269,6 +6145,10 @@ function setApplyStep(step) {
         showToast('Internship Certificate (PDF ONLY) is required', 'error');
         return;
       }
+      if (!state.applyForm.transcript_certificate_pdf) {
+        showToast('Academic Transcript (PDF ONLY) is required', 'error');
+        return;
+      }
     } else if (state.applyStep === 3) {
       if (!state.applyForm.pref_1) {
         showToast('Supervisor Preference 1 is required', 'error');
@@ -5298,14 +6178,12 @@ function handleApplicationPdfPick(e) {
   const file = e.target.files && e.target.files[0];
   if (!file) return;
 
-  if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
-    showToast('Internship Certificate MUST be a PDF file (.pdf)', 'error');
-    e.target.value = '';
-    return;
-  }
-
-  if (file.size > 10 * 1024 * 1024) {
-    showToast('PDF file size must be less than 10MB', 'error');
+  if (!validateUploadedFile(file, {
+    allowedMimeTypes: ['application/pdf'],
+    allowedExtensions: ['.pdf'],
+    maxBytes: 10 * 1024 * 1024,
+    label: 'Internship Certificate'
+  })) {
     e.target.value = '';
     return;
   }
@@ -5315,6 +6193,30 @@ function handleApplicationPdfPick(e) {
     state.applyForm.internship_certificate_pdf = reader.result;
     state.applyForm.pdf_name = file.name;
     state.applyForm.pdf_size = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
+    render();
+  };
+  reader.readAsDataURL(file);
+}
+
+function handleTranscriptPdfPick(e) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+
+  if (!validateUploadedFile(file, {
+    allowedMimeTypes: ['application/pdf'],
+    allowedExtensions: ['.pdf'],
+    maxBytes: 10 * 1024 * 1024,
+    label: 'Academic Transcript'
+  })) {
+    e.target.value = '';
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    state.applyForm.transcript_certificate_pdf = reader.result;
+    state.applyForm.transcript_pdf_name = file.name;
+    state.applyForm.transcript_pdf_size = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
     render();
   };
   reader.readAsDataURL(file);
@@ -5503,30 +6405,82 @@ function renderPublicApplicationPage() {
             </div>
           </div>
 
-          <!-- Mandatory Internship Certificate Upload (PDF ONLY) -->
-          <div class="bg-gray-50 border-2 border-dashed border-fypilot-300 rounded-2xl p-4 sm:p-5 text-center">
-            <i class="fas fa-file-pdf text-red-500 text-3xl mb-2"></i>
-            <h3 class="font-bold text-sm text-gray-900">Mandatory Internship Certificate *</h3>
-            <p class="text-xs text-gray-500 mt-1">Upload your official internship completion certificate in <b>PDF format ONLY (.pdf)</b></p>
-            
-            <input type="file" id="apply-cert-input" accept="application/pdf,.pdf" class="hidden" onchange="handleApplicationPdfPick(event)" />
-            
-            ${f.internship_certificate_pdf ? `
-              <div class="mt-4 bg-white border border-emerald-300 rounded-xl p-3 max-w-md mx-auto flex items-center justify-between shadow-sm">
-                <div class="flex items-center gap-2.5 min-w-0 flex-1">
-                  <i class="fas fa-file-pdf text-red-500 text-2xl shrink-0"></i>
-                  <div class="text-left min-w-0 flex-1">
-                    <span class="block text-xs font-bold text-gray-800 truncate">${f.pdf_name}</span>
-                    <span class="text-[10px] text-gray-400 block truncate">${f.pdf_size} &bull; PDF Verified</span>
-                  </div>
-                </div>
-                <button onclick="document.getElementById('apply-cert-input').click()" class="text-xs font-bold text-fypilot-600 hover:text-fypilot-800 border border-fypilot-200 px-2.5 py-1 rounded-lg shrink-0 ml-2">Change</button>
+          <div class="space-y-4">
+            <div>
+              <label class="block text-xs font-bold text-gray-700 mb-1">Abstract</label>
+              <textarea id="apply-abstract" rows="3" oninput="state.applyForm.abstract = this.value" placeholder="Brief summary of your project" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none transition-all">${escapeHtml(f.abstract || '')}</textarea>
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-gray-700 mb-1">Problem Statement</label>
+              <textarea id="apply-problem-statement" rows="2" oninput="state.applyForm.problem_statement = this.value" placeholder="What specific problem does this solve?" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none transition-all">${escapeHtml(f.problem_statement || '')}</textarea>
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-gray-700 mb-1">Objectives</label>
+              <textarea id="apply-objectives" rows="2" oninput="state.applyForm.objectives = this.value" placeholder="List key objectives" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none transition-all">${escapeHtml(f.objectives || '')}</textarea>
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-gray-700 mb-1">Methodology &amp; Tech Stack</label>
+              <textarea id="apply-methodology" rows="2" oninput="state.applyForm.methodology = this.value; state.applyForm.technologies = this.value" placeholder="Describe methodology and tech stack" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none transition-all">${escapeHtml(f.methodology || f.technologies || '')}</textarea>
+            </div>
+          </div>
+
+          <!-- Mandatory Documents Upload (Internship Certificate + Academic Transcript) -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <!-- Internship Certificate Card -->
+            <div class="bg-gray-50 border-2 border-dashed border-fypilot-300 rounded-2xl p-4 text-center flex flex-col justify-between">
+              <div>
+                <i class="fas fa-file-pdf text-red-500 text-3xl mb-2"></i>
+                <h3 class="font-bold text-sm text-gray-900">Internship Certificate *</h3>
+                <p class="text-[11px] text-gray-500 mt-1">Upload completion certificate <b>(PDF ONLY)</b></p>
               </div>
-            ` : `
-              <button onclick="document.getElementById('apply-cert-input').click()" class="mt-3 bg-white border border-gray-300 hover:border-fypilot-500 text-gray-700 font-bold px-4 py-2 rounded-xl text-xs shadow-sm transition-all flex items-center gap-2 mx-auto">
-                <i class="fas fa-upload text-fypilot-600"></i> Select PDF File
-              </button>
-            `}
+              
+              <input type="file" id="apply-cert-input" accept="application/pdf,.pdf" class="hidden" onchange="handleApplicationPdfPick(event)" />
+              
+              ${f.internship_certificate_pdf ? `
+                <div class="mt-3 bg-white border border-emerald-300 rounded-xl p-2.5 flex items-center justify-between shadow-sm">
+                  <div class="flex items-center gap-2 min-w-0 flex-1">
+                    <i class="fas fa-file-pdf text-red-500 text-xl shrink-0"></i>
+                    <div class="text-left min-w-0 flex-1">
+                      <span class="block text-xs font-bold text-gray-800 truncate">${f.pdf_name}</span>
+                      <span class="text-[10px] text-gray-400 block truncate">${f.pdf_size} &bull; PDF Verified</span>
+                    </div>
+                  </div>
+                  <button onclick="document.getElementById('apply-cert-input').click()" class="text-[11px] font-bold text-fypilot-600 hover:text-fypilot-800 border border-fypilot-200 px-2 py-1 rounded-lg shrink-0 ml-1.5">Change</button>
+                </div>
+              ` : `
+                <button onclick="document.getElementById('apply-cert-input').click()" class="mt-3 bg-white border border-gray-300 hover:border-fypilot-500 text-gray-700 font-bold px-3 py-2 rounded-xl text-xs shadow-sm transition-all flex items-center gap-1.5 mx-auto">
+                  <i class="fas fa-upload text-fypilot-600"></i> Select Certificate PDF
+                </button>
+              `}
+            </div>
+
+            <!-- Academic Transcript Card -->
+            <div class="bg-gray-50 border-2 border-dashed border-indigo-300 rounded-2xl p-4 text-center flex flex-col justify-between">
+              <div>
+                <i class="fas fa-file-invoice text-indigo-500 text-3xl mb-2"></i>
+                <h3 class="font-bold text-sm text-gray-900">Academic Transcript *</h3>
+                <p class="text-[11px] text-gray-500 mt-1">Upload official transcript <b>(PDF ONLY)</b></p>
+              </div>
+              
+              <input type="file" id="apply-transcript-input" accept="application/pdf,.pdf" class="hidden" onchange="handleTranscriptPdfPick(event)" />
+              
+              ${f.transcript_certificate_pdf ? `
+                <div class="mt-3 bg-white border border-emerald-300 rounded-xl p-2.5 flex items-center justify-between shadow-sm">
+                  <div class="flex items-center gap-2 min-w-0 flex-1">
+                    <i class="fas fa-file-pdf text-red-500 text-xl shrink-0"></i>
+                    <div class="text-left min-w-0 flex-1">
+                      <span class="block text-xs font-bold text-gray-800 truncate">${f.transcript_pdf_name}</span>
+                      <span class="text-[10px] text-gray-400 block truncate">${f.transcript_pdf_size} &bull; PDF Verified</span>
+                    </div>
+                  </div>
+                  <button onclick="document.getElementById('apply-transcript-input').click()" class="text-[11px] font-bold text-fypilot-600 hover:text-fypilot-800 border border-fypilot-200 px-2 py-1 rounded-lg shrink-0 ml-1.5">Change</button>
+                </div>
+              ` : `
+                <button onclick="document.getElementById('apply-transcript-input').click()" class="mt-3 bg-white border border-gray-300 hover:border-indigo-500 text-gray-700 font-bold px-3 py-2 rounded-xl text-xs shadow-sm transition-all flex items-center gap-1.5 mx-auto">
+                  <i class="fas fa-upload text-indigo-600"></i> Select Transcript PDF
+                </button>
+              `}
+            </div>
           </div>
 
           <!-- Dynamic Group Members -->
@@ -5703,12 +6657,13 @@ function renderPublicApplicationPage() {
               <div><span class="text-gray-400 font-semibold block">Supervisor Preferences:</span><span class="font-bold text-gray-800">1: ${f.pref_1} ${f.pref_2 ? '| 2: ' + f.pref_2 : ''} ${f.pref_3 ? '| 3: ' + f.pref_3 : ''}</span></div>
               <div><span class="text-gray-400 font-semibold block">Priority Designation:</span><span class="font-bold text-amber-700 capitalize">${f.priority}</span></div>
               <div><span class="text-gray-400 font-semibold block">Internship Certificate:</span><span class="font-bold text-emerald-600 flex items-center gap-1"><i class="fas fa-file-pdf text-red-500"></i> ${f.pdf_name} (${f.pdf_size})</span></div>
+              <div><span class="text-gray-400 font-semibold block">Academic Transcript:</span><span class="font-bold text-indigo-600 flex items-center gap-1"><i class="fas fa-file-pdf text-red-500"></i> ${f.transcript_pdf_name} (${f.transcript_pdf_size})</span></div>
             </div>
           </div>
 
           <label class="flex items-start gap-3 p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl cursor-pointer">
             <input type="checkbox" id="apply-confirm-check" class="mt-0.5 accent-emerald-600" />
-            <span class="text-xs text-emerald-900 font-medium leading-relaxed">I confirm that all provided academic information, team details, and the uploaded internship certificate PDF are accurate and authentic.</span>
+            <span class="text-xs text-emerald-900 font-medium leading-relaxed">I confirm that all provided academic information, team details, uploaded internship certificate, and academic transcript PDF documents are accurate and authentic.</span>
           </label>
 
           <div class="flex items-center justify-between gap-3 pt-5 border-t border-gray-100">
@@ -5749,6 +6704,11 @@ async function submitPublicApplication() {
     department: f.department,
     group_name: f.group_name,
     project_title: f.project_title,
+    abstract: f.abstract,
+    problem_statement: f.problem_statement,
+    objectives: f.objectives,
+    methodology: f.methodology || f.technologies,
+    technologies: f.technologies || f.methodology,
     group_members: f.members,
     members: f.members,
     supervisor_preference_1: f.pref_1,
@@ -5762,7 +6722,11 @@ async function submitPublicApplication() {
     internship_certificate: f.internship_certificate_pdf,
     internship_certificate_pdf: f.internship_certificate_pdf,
     internship_filename: f.pdf_name,
-    pdf_name: f.pdf_name
+    pdf_name: f.pdf_name,
+    transcript_certificate: f.transcript_certificate_pdf,
+    transcript_certificate_pdf: f.transcript_certificate_pdf,
+    transcript_filename: f.transcript_pdf_name,
+    transcript_pdf_name: f.transcript_pdf_name
   };
 
   try {
@@ -5971,6 +6935,8 @@ async function showReviewApplicationModal(id) {
   const studentId = appItem.student_id_num || appItem.student_id || 'N/A';
   const pdfCert = appItem.internship_certificate || appItem.internship_certificate_pdf;
   const pdfFilename = appItem.internship_filename || appItem.pdf_name || `Internship_Certificate_${studentId}.pdf`;
+  const transcriptCert = appItem.transcript_certificate || appItem.transcript_certificate_pdf;
+  const transcriptFilename = appItem.transcript_filename || appItem.transcript_pdf_name || `Transcript_${studentId}.pdf`;
 
   let members = [];
   try {
@@ -6021,8 +6987,8 @@ async function showReviewApplicationModal(id) {
       <!-- Internship PDF Certificate Viewer & Download -->
       <div class="border-t pt-3 space-y-2">
         <h4 class="text-xs font-bold text-gray-700 flex items-center justify-between">
-          <span><i class="fas fa-file-pdf text-red-500 mr-1.5"></i> Internship Certificate PDF Document</span>
-          ${pdfCert ? `<span class="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">PDF Attached</span>` : ''}
+          <span><i class="fas fa-file-pdf text-red-500 mr-1.5"></i> 1. Internship Certificate PDF Document</span>
+          ${pdfCert ? `<span class="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">PDF Attached</span>` : '<span class="text-[10px] bg-gray-100 text-gray-500 font-bold px-2 py-0.5 rounded-full">Not Attached</span>'}
         </h4>
 
         ${pdfCert ? `
@@ -6041,12 +7007,45 @@ async function showReviewApplicationModal(id) {
 
             <!-- Embedded PDF Preview Frame -->
             <div class="rounded-xl overflow-hidden border border-slate-700 bg-slate-800">
-              <iframe src="${pdfCert}" class="w-full h-60 sm:h-72 border-0 bg-white" title="Internship Certificate PDF"></iframe>
+              <iframe src="${pdfCert}" class="w-full h-56 sm:h-64 border-0 bg-white" title="Internship Certificate PDF"></iframe>
             </div>
           </div>
         ` : `
-          <div class="p-4 bg-gray-50 border border-gray-200 rounded-2xl text-center text-xs text-gray-500">
+          <div class="p-3 bg-gray-50 border border-gray-200 rounded-xl text-center text-xs text-gray-500">
             No PDF internship certificate document attached.
+          </div>
+        `}
+      </div>
+
+      <!-- Academic Transcript PDF Viewer & Download -->
+      <div class="border-t pt-3 space-y-2">
+        <h4 class="text-xs font-bold text-gray-700 flex items-center justify-between">
+          <span><i class="fas fa-file-invoice text-indigo-500 mr-1.5"></i> 2. Academic Transcript PDF Document</span>
+          ${transcriptCert ? `<span class="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">PDF Attached</span>` : '<span class="text-[10px] bg-gray-100 text-gray-500 font-bold px-2 py-0.5 rounded-full">Not Attached</span>'}
+        </h4>
+
+        ${transcriptCert ? `
+          <div class="bg-slate-900 rounded-2xl p-4 text-white space-y-3">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <span class="text-xs font-mono text-gray-300 truncate max-w-full sm:max-w-xs"><i class="fas fa-paperclip text-indigo-400 mr-1"></i> ${escapeHtml(transcriptFilename)}</span>
+              <div class="flex flex-wrap items-center gap-2">
+                <button onclick="openPdfDataUrlInNewTab('${escapeHtml(transcriptCert)}')" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs transition-all flex items-center gap-1">
+                  <i class="fas fa-external-link-alt"></i> Open Full Screen
+                </button>
+                <a href="${transcriptCert}" download="${escapeHtml(transcriptFilename)}" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs transition-all flex items-center gap-1">
+                  <i class="fas fa-download"></i> Download PDF
+                </a>
+              </div>
+            </div>
+
+            <!-- Embedded PDF Preview Frame -->
+            <div class="rounded-xl overflow-hidden border border-slate-700 bg-slate-800">
+              <iframe src="${transcriptCert}" class="w-full h-56 sm:h-64 border-0 bg-white" title="Academic Transcript PDF"></iframe>
+            </div>
+          </div>
+        ` : `
+          <div class="p-3 bg-gray-50 border border-gray-200 rounded-xl text-center text-xs text-gray-500">
+            No PDF transcript document attached.
           </div>
         `}
       </div>

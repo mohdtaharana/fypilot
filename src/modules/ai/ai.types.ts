@@ -143,7 +143,7 @@ export interface User {
   id: string;
   email: string;
   name: string;
-  role: 'student' | 'supervisor' | 'coordinator' | 'admin';
+  role: 'student' | 'supervisor' | 'coordinator' | 'hod' | 'dean' | 'admin';
   department?: string;
   expertise?: string;
   research_areas?: string;

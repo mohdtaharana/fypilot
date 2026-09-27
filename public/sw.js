@@ -1,4 +1,4 @@
-const CACHE = 'fypilot-v1';
+const CACHE = 'fypilot-v2';
 const STATIC = [
   '/',
   '/manifest.webmanifest',
@@ -6,8 +6,8 @@ const STATIC = [
   '/icons/icon-512.png',
   '/images/fypilotlogo.png',
   '/images/fypilot-logo.png',
-  '/static/app.js',
-  '/static/style.css'
+  '/static/app.js?v=20260927-1',
+  '/static/style.css?v=20260927-1'
 ];
 
 self.addEventListener('install', (event) => {
@@ -27,17 +27,17 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
 
   if (request.method !== 'GET' || url.pathname.startsWith('/api/')) return;
+  if (url.origin !== self.location.origin) return;
 
   event.respondWith(
-    caches.match(request).then((cached) => {
-      const fetched = fetch(request).then((response) => {
-        if (response && response.status === 200 && response.type === 'basic') {
+    fetch(request)
+      .then((response) => {
+        if (response && response.ok && response.type === 'basic') {
           const copy = response.clone();
           caches.open(CACHE).then((cache) => cache.put(request, copy));
         }
         return response;
-      }).catch(() => cached);
-      return cached || fetched;
-    })
+      })
+      .catch(() => caches.match(request).then((cached) => cached || caches.match('/')))
   );
 });

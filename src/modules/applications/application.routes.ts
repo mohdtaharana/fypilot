@@ -1,7 +1,23 @@
 import { Hono } from 'hono';
 import type { Env } from '../ai/ai.types';
 import { generateId } from '../ai/ai.utils';
+import { logAuditEvent } from '../audit/audit.routes';
 import { createNotification, notifyRole } from '../notifications/notification.routes';
+
+const EXECUTIVE_ROLES = new Set(['coordinator', 'hod', 'dean']);
+const isExecutiveRole = (role?: string | null) => !!role && EXECUTIVE_ROLES.has(role);
+
+async function cleanupBrokenApprovalReferences(db: Env['DB']) {
+  try {
+    await db.prepare('DELETE FROM project_members WHERE user_id NOT IN (SELECT id FROM users)').run();
+    await db.prepare('DELETE FROM group_members WHERE user_id NOT IN (SELECT id FROM users)').run();
+    await db.prepare('DELETE FROM groups WHERE leader_id NOT IN (SELECT id FROM users)').run();
+    await db.prepare('DELETE FROM proposals WHERE submitted_by NOT IN (SELECT id FROM users)').run();
+    await db.prepare('DELETE FROM projects WHERE supervisor_id IS NOT NULL AND supervisor_id NOT IN (SELECT id FROM users)').run();
+  } catch (e) {
+    console.warn('cleanupBrokenApprovalReferences failed:', e);
+  }
+}
 
 const applicationRoutes = new Hono<{ Bindings: Env }>();
 
@@ -86,8 +102,15 @@ applicationRoutes.post('/', async (c) => {
     const department = body.department;
     const internship_certificate = body.internship_certificate || body.internship_certificate_pdf;
     const internship_filename = body.internship_filename || body.pdf_name || 'internship_certificate.pdf';
+    const transcript_certificate = body.transcript_certificate || body.transcript_certificate_pdf;
+    const transcript_filename = body.transcript_filename || body.transcript_pdf_name || 'transcript.pdf';
     const group_name = (body.group_name || '').trim();
     const project_title = (body.project_title || '').trim();
+    const abstract = (body.abstract || '').trim();
+    const problem_statement = (body.problem_statement || '').trim();
+    const objectives = (body.objectives || '').trim();
+    const methodology = (body.methodology || '').trim();
+    const technologies = (body.technologies || body.methodology || '').trim();
     const group_members = body.group_members || body.members || [];
     const supervisor_preference_1 = body.supervisor_preference_1 || body.pref_1;
     const supervisor_preference_2 = body.supervisor_preference_2 || body.pref_2;
@@ -135,11 +158,22 @@ applicationRoutes.post('/', async (c) => {
     if (!internship_certificate || typeof internship_certificate !== 'string') {
       return c.json({ success: false, error: 'Internship Certificate is required' }, 400);
     }
-    const isPdf = internship_certificate.startsWith('data:application/pdf;') ||
-                  internship_certificate.includes('application/pdf') ||
-                  (internship_filename && internship_filename.toLowerCase().endsWith('.pdf'));
-    if (!isPdf) {
+    const isInternshipPdf = internship_certificate.startsWith('data:application/pdf;') ||
+                            internship_certificate.includes('application/pdf') ||
+                            (internship_filename && internship_filename.toLowerCase().endsWith('.pdf'));
+    if (!isInternshipPdf) {
       return c.json({ success: false, error: 'Internship Certificate must be a PDF file' }, 400);
+    }
+
+    // 7b. Academic Transcript (PDF required)
+    if (!transcript_certificate || typeof transcript_certificate !== 'string') {
+      return c.json({ success: false, error: 'Academic Transcript is required' }, 400);
+    }
+    const isTranscriptPdf = transcript_certificate.startsWith('data:application/pdf;') ||
+                            transcript_certificate.includes('application/pdf') ||
+                            (transcript_filename && transcript_filename.toLowerCase().endsWith('.pdf'));
+    if (!isTranscriptPdf) {
+      return c.json({ success: false, error: 'Academic Transcript must be a PDF file' }, 400);
     }
 
     // 8. FYP Group & Project Title
@@ -184,13 +218,44 @@ applicationRoutes.post('/', async (c) => {
     const dbPriority = isUrgent ? 'Urgent' : 'Normal';
     const initialNotes = (typeof supervisor_priority === 'string' && supervisor_priority !== 'Normal' && supervisor_priority !== 'Urgent') ? `[Priority details: ${supervisor_priority}]` : null;
 
+    const existingPendingUser = await c.env.DB.prepare(
+      'SELECT id FROM users WHERE LOWER(email) = LOWER(?) OR student_id_num = ?'
+    ).bind(email.toLowerCase().trim(), student_id).first();
+
+    if (existingPendingUser) {
+      const pendingUser = await c.env.DB.prepare(
+        'SELECT id, status FROM users WHERE id = ?'
+      ).bind(existingPendingUser.id as string).first() as Record<string, any> | null;
+
+      if (pendingUser && pendingUser.status === 'pending') {
+        return c.json({ success: false, error: 'This student already has a pending registration request.' }, 409);
+      }
+    }
+
+    const pendingUserId = existingPendingUser?.id || generateId();
+    if (!existingPendingUser) {
+      await c.env.DB.prepare(
+        `INSERT INTO users (id, email, name, role, department, student_id_num, program, shift, status)
+         VALUES (?, ?, ?, 'student', ?, ?, ?, ?, 'pending')`
+      ).bind(
+        pendingUserId,
+        email.toLowerCase().trim(),
+        student_name,
+        department,
+        student_id,
+        program,
+        shift
+      ).run();
+    }
+
     await c.env.DB.prepare(
       `INSERT INTO student_applications (
         id, email, student_id_num, student_name, program, shift, department,
-        internship_certificate, internship_filename, group_name, project_title,
+        internship_certificate, internship_filename, transcript_certificate, transcript_filename,
+        group_name, project_title, abstract, problem_statement, objectives, methodology, technologies,
         group_members, supervisor_preference_1, supervisor_preference_2, supervisor_preference_3,
         supervisor_priority, admin_notes, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'submitted')`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       appId,
       email.toLowerCase().trim(),
@@ -201,15 +266,30 @@ applicationRoutes.post('/', async (c) => {
       department,
       internship_certificate,
       internship_filename,
+      transcript_certificate,
+      transcript_filename,
       group_name,
       project_title,
+      abstract || null,
+      problem_statement || null,
+      objectives || null,
+      methodology || null,
+      technologies || null,
       membersJson,
       supervisor_preference_1,
       supervisor_preference_2 || null,
       supervisor_preference_3 || null,
       dbPriority,
-      initialNotes
+      initialNotes,
+      'submitted'
     ).run();
+
+    await logAuditEvent(c.env.DB, null, 'student', 'student_application_created', {
+      entityType: 'student_application',
+      entityId: String(appId),
+      details: `Student application created for ${student_name}`,
+      metadata: { application_id: appId, email: email.toLowerCase().trim(), project_title }
+    });
 
     // Notify coordinator of new student application
     await notifyRole(c.env.DB, 'coordinator', {
@@ -246,8 +326,8 @@ applicationRoutes.post('/', async (c) => {
 // GET /api/applications — List applications for Admin / Coordinator
 applicationRoutes.get('/', async (c) => {
   const userRole = c.req.header('X-User-Role');
-  if (userRole !== 'coordinator' && userRole !== 'admin') {
-    return c.json({ success: false, error: 'Only administrators can view applications' }, 403);
+  if (!isExecutiveRole(userRole) && userRole !== 'admin') {
+    return c.json({ success: false, error: 'Only executive roles and administrators can view applications' }, 403);
   }
 
   const result = await c.env.DB.prepare(
@@ -290,8 +370,8 @@ applicationRoutes.get('/:id', async (c) => {
 // PUT /api/applications/:id/status — Admin Approve / Reject / Request Changes
 applicationRoutes.put('/:id/status', async (c) => {
   const userRole = c.req.header('X-User-Role');
-  if (userRole !== 'coordinator' && userRole !== 'admin') {
-    return c.json({ success: false, error: 'Only administrators can review applications' }, 403);
+  if (!isExecutiveRole(userRole) && userRole !== 'admin') {
+    return c.json({ success: false, error: 'Only executive roles and administrators can review applications' }, 403);
   }
 
   const id = c.req.param('id');
@@ -312,14 +392,16 @@ applicationRoutes.put('/:id/status', async (c) => {
     }
 
     if (status === 'approved') {
+      await cleanupBrokenApprovalReferences(c.env.DB);
+
       // 1. Create Student User Account
       let studentId = generateId();
-      const existingUser = await c.env.DB.prepare('SELECT id FROM users WHERE email = ? OR student_id_num = ?').bind(app.email, app.student_id_num).first();
+      const existingUser = await c.env.DB.prepare('SELECT id FROM users WHERE LOWER(email) = LOWER(?) OR student_id_num = ?').bind(app.email, app.student_id_num).first();
       
       if (existingUser) {
         studentId = existingUser.id as string;
         await c.env.DB.prepare(
-          `UPDATE users SET status = 'active', role = 'student', department = ?, student_id_num = ?, program = ?, shift = ?, password = ? WHERE id = ?`
+          `UPDATE users SET status = 'active', role = 'student', department = ?, student_id_num = ?, program = ?, shift = ?, password = COALESCE(password, ?) WHERE id = ?`
         ).bind(app.department, app.student_id_num, app.program, app.shift, provisioned_password, studentId).run();
       } else {
         await c.env.DB.prepare(
@@ -361,10 +443,13 @@ applicationRoutes.put('/:id/status', async (c) => {
                      VALUES (?, ?, ?, 'student', ?, ?, ?, ?, 'active', ?)`
                   ).bind(memUserId, memEmail, memName, app.department, memIdNum, app.program, app.shift, provisioned_password).run();
                 }
-                // Add to group if not already added
-                const inGroup = await c.env.DB.prepare('SELECT id FROM group_members WHERE group_id = ? AND user_id = ?').bind(groupId, memUserId).first();
-                if (!inGroup) {
-                  await c.env.DB.prepare('INSERT INTO group_members (id, group_id, user_id) VALUES (?, ?, ?)').bind(generateId(), groupId, memUserId).run();
+
+                const memberExists = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(memUserId).first();
+                if (memberExists) {
+                  const inGroup = await c.env.DB.prepare('SELECT id FROM group_members WHERE group_id = ? AND user_id = ?').bind(groupId, memUserId).first();
+                  if (!inGroup) {
+                    await c.env.DB.prepare('INSERT INTO group_members (id, group_id, user_id) VALUES (?, ?, ?)').bind(generateId(), groupId, memUserId).run();
+                  }
                 }
               }
             }
@@ -388,9 +473,20 @@ applicationRoutes.put('/:id/status', async (c) => {
       // 3. Create Approved Proposal
       const proposalId = generateId();
       await c.env.DB.prepare(
-        `INSERT INTO proposals (id, title, status, submitted_by, supervisor_id, group_id)
-         VALUES (?, ?, 'approved', ?, ?, ?)`
-      ).bind(proposalId, app.project_title, studentId, supervisorUserId, groupId).run();
+        `INSERT INTO proposals (id, title, abstract, problem_statement, objectives, methodology, technologies, status, submitted_by, supervisor_id, group_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?)`
+      ).bind(
+        proposalId,
+        app.project_title,
+        app.abstract || null,
+        app.problem_statement || null,
+        app.objectives || null,
+        app.methodology || null,
+        app.technologies || app.methodology || null,
+        studentId,
+        supervisorUserId,
+        groupId
+      ).run();
 
       // 4. Create Active Project
       const projectId = generateId();
@@ -402,15 +498,26 @@ applicationRoutes.put('/:id/status', async (c) => {
       // 5. Add Project Members
       const allGroupMembers = await c.env.DB.prepare('SELECT user_id FROM group_members WHERE group_id = ?').bind(groupId).all();
       for (const row of (allGroupMembers.results || [])) {
+        const memberId = (row as any).user_id;
+        const memberExists = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(memberId).first();
+        if (!memberExists) continue;
+        const inProject = await c.env.DB.prepare('SELECT id FROM project_members WHERE project_id = ? AND user_id = ?').bind(projectId, memberId).first();
+        if (inProject) continue;
         await c.env.DB.prepare(
           `INSERT INTO project_members (id, project_id, user_id) VALUES (?, ?, ?)`
-        ).bind(generateId(), projectId, (row as any).user_id).run();
+        ).bind(generateId(), projectId, memberId).run();
       }
 
       // 6. Update Application Status
       await c.env.DB.prepare(
         `UPDATE student_applications SET status = 'approved', admin_notes = ?, updated_at = datetime('now') WHERE id = ?`
       ).bind(admin_notes || app.admin_notes || 'Approved by Admin', id).run();
+      await logAuditEvent(c.env.DB, c.req.header('X-User-Id') || 'system', userRole, 'student_application_approved', {
+        entityType: 'student_application',
+        entityId: String(id),
+        details: `Student application approved for ${app.student_name}`,
+        metadata: { application_id: id, student_email: app.email, project_title: app.project_title }
+      });
 
       // 7. Send notification to student
       await createNotification(c.env.DB, studentId, {
@@ -431,6 +538,12 @@ applicationRoutes.put('/:id/status', async (c) => {
     await c.env.DB.prepare(
       `UPDATE student_applications SET status = ?, admin_notes = ?, updated_at = datetime('now') WHERE id = ?`
     ).bind(status, admin_notes || app.admin_notes || null, id).run();
+    await logAuditEvent(c.env.DB, c.req.header('X-User-Id') || 'system', userRole, status === 'rejected' ? 'student_application_rejected' : 'student_application_revision_requested', {
+      entityType: 'student_application',
+      entityId: String(id),
+      details: `Student application status changed to ${status}`,
+      metadata: { application_id: id, student_email: app.email, project_title: app.project_title, status }
+    });
 
     return c.json({
       success: true,
