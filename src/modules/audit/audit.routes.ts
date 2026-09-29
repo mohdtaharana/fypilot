@@ -102,6 +102,34 @@ auditRoutes.get('/logs', async (c) => {
   return c.json({ success: true, data: result.results });
 });
 
+// DELETE /api/audit/logs/bulk — purge every audit-log entry.
+auditRoutes.delete('/logs/bulk', async (c) => {
+  const userRole = await resolveRequestRole(c);
+  if (!isAuditAccessRole(userRole)) {
+    return c.json({ success: false, error: 'Only HOD and Dean can clear audit logs.' }, 403);
+  }
+
+  const body = await c.req.json().catch(() => ({} as any));
+  if (body?.confirm !== 'DELETE ALL LOGS') {
+    return c.json({ success: false, error: 'Confirmation phrase did not match' }, 400);
+  }
+
+  const actorId = c.req.header('X-User-Id') || 'session-user';
+  try {
+    const count = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM audit_logs').first<{ n: number }>();
+    await c.env.DB.prepare('DELETE FROM audit_logs').run();
+    await logAuditEvent(c.env.DB, actorId, userRole, 'audit_logs_cleared', {
+      entityType: 'system',
+      entityId: 'audit_logs',
+      details: `All ${count?.n || 0} audit log entries cleared`,
+      metadata: { cleared_count: count?.n || 0, cleared_at: new Date().toISOString() },
+    });
+    return c.json({ success: true, message: `All audit log entries cleared.`, deleted: count?.n || 0 });
+  } catch (e: any) {
+    return c.json({ success: false, error: 'Failed to clear audit logs: ' + (e?.message || 'unknown error') }, 500);
+  }
+});
+
 // GET /api/audit/logs/export?format=csv|json
 auditRoutes.get('/logs/export', async (c) => {
   const userRole = await resolveRequestRole(c);

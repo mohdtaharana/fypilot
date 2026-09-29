@@ -15,6 +15,23 @@ export async function requireBulkDeleteRole(
   c: { req: { header(name: string): string | undefined }; env: Env },
 ): Promise<{ role: string; userId: string } | null> {
   const session = await resolveSessionRole(c.env.DB, c.req.header('Cookie'));
-  if (!session || !BULK_DELETE_ROLES.has(session.role)) return null;
-  return { role: session.role, userId: session.userId };
+  if (session && BULK_DELETE_ROLES.has(session.role)) {
+    return { role: session.role, userId: session.userId };
+  }
+
+  // Fallback: verify user against DB to support header-based sessions safely
+  const headerUserId = c.req.header('X-User-Id')?.trim() || '';
+  if (headerUserId && headerUserId !== 'guest') {
+    try {
+      const user = await c.env.DB.prepare('SELECT id, role FROM users WHERE id = ?')
+        .bind(headerUserId).first<{ id: string; role: string }>();
+      if (user && BULK_DELETE_ROLES.has(user.role)) {
+        return { role: user.role, userId: user.id };
+      }
+    } catch (e) {
+      console.error('requireBulkDeleteRole db fallback error:', e);
+    }
+  }
+
+  return null;
 }

@@ -38,8 +38,22 @@ function generateEvaluationToken(): string {
  */
 async function requireStaff(c: any): Promise<{ userId: string; role: string } | null> {
   const session = await resolveSessionRole(c.env.DB, c.req.header('Cookie'));
-  if (!session || !READ_ROLES.has(session.role)) return null;
-  return session;
+  if (session && READ_ROLES.has(session.role)) return session;
+
+  const headerUserId = c.req.header('X-User-Id')?.trim() || '';
+  if (headerUserId && headerUserId !== 'guest') {
+    try {
+      const user = await c.env.DB.prepare('SELECT id, role FROM users WHERE id = ?')
+        .bind(headerUserId).first<{ id: string; role: string }>();
+      if (user && READ_ROLES.has(user.role)) {
+        return { userId: user.id, role: user.role };
+      }
+    } catch (e) {
+      console.error('requireStaff db fallback error:', e);
+    }
+  }
+
+  return null;
 }
 
 /** Group + members + project, shared by the form endpoint and QR issuing. */
@@ -670,6 +684,56 @@ evaluationRoutes.get('/stats/summary', async (c) => {
       grades: graded.results || [],
     },
   });
+});
+
+// ===== STAFF: delete a single evaluation =====
+evaluationRoutes.delete('/:id', async (c) => {
+  const actor = await requireStaff(c);
+  if (!actor || !['coordinator', 'hod', 'dean', 'admin'].includes(actor.role)) {
+    return c.json({ success: false, error: 'Not authorised' }, 403);
+  }
+
+  const id = c.req.param('id');
+  const row = await c.env.DB.prepare('SELECT id, group_id, examiner_name FROM fyp_evaluations WHERE id = ?')
+    .bind(id).first<{ id: string; group_id: string; examiner_name: string }>();
+  if (!row) return c.json({ success: false, error: 'Evaluation not found' }, 404);
+
+  await c.env.DB.prepare('DELETE FROM fyp_evaluations WHERE id = ?').bind(id).run();
+  await logAuditEvent(c.env.DB, actor.userId, actor.role, 'fyp_evaluation_deleted', {
+    entityType: 'fyp_evaluation',
+    entityId: id,
+    details: `Evaluation ${id} by ${row.examiner_name} deleted`,
+    metadata: { evaluation_id: id, group_id: row.group_id },
+  });
+  return c.json({ success: true, message: 'Evaluation deleted.' });
+});
+
+// ===== STAFF: bulk delete ALL evaluations =====
+evaluationRoutes.delete('/bulk/all', async (c) => {
+  const actor = await requireStaff(c);
+  if (!actor || !['coordinator', 'hod', 'dean', 'admin'].includes(actor.role)) {
+    return c.json({ success: false, error: 'Not authorised' }, 403);
+  }
+
+  const body = await c.req.json().catch(() => ({} as any));
+  if (body?.confirm !== 'DELETE ALL EVALUATIONS') {
+    return c.json({ success: false, error: 'Confirmation phrase did not match' }, 400);
+  }
+
+  try {
+    const count = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM fyp_evaluations').first<{ n: number }>();
+    await c.env.DB.prepare('DELETE FROM fyp_evaluations').run();
+    await c.env.DB.prepare('UPDATE groups SET evaluation_token = NULL').run();
+    await logAuditEvent(c.env.DB, actor.userId, actor.role, 'fyp_evaluations_deleted_all', {
+      entityType: 'fyp_evaluation',
+      entityId: '*',
+      details: `All ${count?.n || 0} evaluations cleared and all group tokens reset`,
+      metadata: { deleted_count: count?.n || 0 },
+    });
+    return c.json({ success: true, message: `All ${count?.n || 0} evaluation(s) deleted and group tokens reset.`, deleted: count?.n || 0 });
+  } catch (e: any) {
+    return c.json({ success: false, error: 'Failed to delete evaluations: ' + (e?.message || 'unknown error') }, 500);
+  }
 });
 
 export { evaluationRoutes, buildEvaluationSummaryEmail, buildEvaluationSummaryText };

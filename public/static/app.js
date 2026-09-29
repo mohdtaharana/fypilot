@@ -212,7 +212,7 @@ async function api(path, options = {}) {
   };
 
   try {
-    const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+    const res = await fetch(`${API_BASE}${path}`, { credentials: 'same-origin', ...options, headers });
     const text = await res.text();
     let data;
     try {
@@ -1035,6 +1035,39 @@ function renderCoordinatorDashboard() {
         <button onclick="navigate('supervisors')" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all"><i class="fas fa-users"></i> Supervisor Workloads</button>
       </div>
     </div>
+
+    <!-- Executive Danger Zone & Bulk Deletion -->
+    <div class="bg-rose-50 border-2 border-rose-200 rounded-2xl p-5 shadow-sm">
+      <div class="flex items-center gap-2 mb-2">
+        <i class="fas fa-exclamation-triangle text-rose-600"></i>
+        <h3 class="font-bold text-rose-900 text-sm uppercase tracking-wider">Executive Danger Zone &amp; Data Purge</h3>
+      </div>
+      <p class="text-xs text-rose-700 mb-4">Bulk operations with confirmation safeguards. Select a data category to wipe:</p>
+      <div class="flex flex-wrap gap-2.5">
+        <button onclick="bulkDeleteAll('students')" class="bg-rose-600 hover:bg-rose-700 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm">
+          <i class="fas fa-user-slash"></i> Delete All Students
+        </button>
+        <button onclick="bulkDeleteAll('groups')" class="bg-rose-700 hover:bg-rose-800 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm">
+          <i class="fas fa-layer-group"></i> Delete All Groups
+        </button>
+        <button onclick="bulkDeleteAll('proposals')" class="bg-rose-600 hover:bg-rose-700 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm">
+          <i class="fas fa-file-excel"></i> Delete All Proposals
+        </button>
+        <button onclick="bulkDeleteAll('projects')" class="bg-rose-700 hover:bg-rose-800 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm">
+          <i class="fas fa-folder-minus"></i> Delete All Projects
+        </button>
+        <button onclick="bulkDeleteAll('applications')" class="bg-rose-600 hover:bg-rose-700 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm">
+          <i class="fas fa-id-card"></i> Delete All Applications
+        </button>
+        ${isAuditAccessRole(state.currentUser?.role) ? `
+        <button onclick="bulkDeleteAll('logs')" class="bg-rose-800 hover:bg-rose-900 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm">
+          <i class="fas fa-history"></i> Clear Audit Logs
+        </button>` : ''}
+        <button onclick="bulkDeleteAll('evaluations')" class="bg-rose-700 hover:bg-rose-800 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm">
+          <i class="fas fa-poll"></i> Delete All Evaluations
+        </button>
+      </div>
+    </div>
   </div>`;
 }
 
@@ -1088,6 +1121,24 @@ function renderPeople() {
 
     <!-- Dynamic results -->
     <div id="people-results" class="space-y-6">Loading...</div>
+
+    <!-- Danger Zone -->
+    ${isExecutiveRole(state.currentUser?.role) ? `
+    <div class="bg-rose-50 border-2 border-rose-200 rounded-2xl p-5 shadow-sm">
+      <div class="flex items-center gap-2 mb-4">
+        <i class="fas fa-exclamation-triangle text-rose-500"></i>
+        <h3 class="font-bold text-rose-800 text-sm uppercase tracking-wider">Danger Zone</h3>
+      </div>
+      <div class="flex flex-wrap gap-3">
+        <button onclick="bulkDeleteAll('students')" class="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm">
+          <i class="fas fa-users-slash"></i> Delete All Students
+        </button>
+        <button onclick="bulkDeleteAll('groups')" class="bg-rose-700 hover:bg-rose-800 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm">
+          <i class="fas fa-layer-group"></i> Delete All Groups
+        </button>
+      </div>
+      <p class="text-xs text-rose-600 mt-3"><i class="fas fa-info-circle mr-1"></i>These actions are irreversible and will cascade to linked proposals and projects.</p>
+    </div>` : ''}
   </div>`;
 }
 
@@ -1132,6 +1183,20 @@ function renderAuditLogs() {
           <div class="h-10 bg-gray-100 rounded-xl"></div>
           <div class="h-10 bg-gray-100 rounded-xl"></div>
         </div>
+      </div>
+
+      <!-- Danger Zone (HOD/Dean only) -->
+      <div class="bg-rose-50 border-2 border-rose-200 rounded-2xl p-5 shadow-sm">
+        <div class="flex items-center gap-2 mb-4">
+          <i class="fas fa-exclamation-triangle text-rose-500"></i>
+          <h3 class="font-bold text-rose-800 text-sm uppercase tracking-wider">Danger Zone</h3>
+        </div>
+        <div class="flex flex-wrap gap-3">
+          <button onclick="bulkDeleteAll('logs')" class="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm">
+            <i class="fas fa-trash-alt"></i> Clear All Audit Logs
+          </button>
+        </div>
+        <p class="text-xs text-rose-600 mt-3"><i class="fas fa-info-circle mr-1"></i>Permanently deletes every audit log entry. One entry is written after clearing for compliance traceability.</p>
       </div>
     </div>
   `;
@@ -1463,6 +1528,127 @@ async function deletePeopleGroup(groupId) {
   } catch (e) { /* handled by api helper */ }
 }
 
+async function bulkDeleteAll(type) {
+  if (!state.currentUser || !isExecutiveRole(state.currentUser.role)) {
+    showToast('Unauthorized: Only executive roles can perform bulk deletions', 'error');
+    return;
+  }
+
+  const configs = {
+    students: {
+      title: 'Delete All Students',
+      prompt: 'Type "DELETE ALL STUDENTS" to permanently delete ALL student accounts and related data:',
+      confirmPhrase: 'DELETE ALL STUDENTS',
+      url: '/users/bulk',
+      onSuccess: async () => {
+        if (state.currentView === 'people') await loadPeople();
+        else navigate('people');
+      }
+    },
+    groups: {
+      title: 'Delete All Groups',
+      prompt: 'Type "DELETE ALL GROUPS" to permanently delete ALL FYP groups and member links:',
+      confirmPhrase: 'DELETE ALL GROUPS',
+      url: '/groups/bulk',
+      onSuccess: async () => {
+        if (state.currentView === 'people') await loadPeople();
+        else navigate('people');
+      }
+    },
+    proposals: {
+      title: 'Delete All Proposals',
+      prompt: 'Type "DELETE ALL PROPOSALS" to permanently delete ALL FYP project proposals:',
+      confirmPhrase: 'DELETE ALL PROPOSALS',
+      url: '/proposals/bulk',
+      onSuccess: async () => {
+        if (state.currentView === 'proposals') await loadProposals();
+        else navigate('proposals');
+      }
+    },
+    projects: {
+      title: 'Delete All Projects',
+      prompt: 'Type "DELETE ALL PROJECTS" to permanently delete ALL active FYP projects:',
+      confirmPhrase: 'DELETE ALL PROJECTS',
+      url: '/projects/bulk',
+      onSuccess: async () => {
+        if (state.currentView === 'projects') await loadProjects();
+        else navigate('projects');
+      }
+    },
+    applications: {
+      title: 'Delete All Applications',
+      prompt: 'Type "DELETE ALL APPLICATIONS" to permanently delete ALL student registration applications:',
+      confirmPhrase: 'DELETE ALL APPLICATIONS',
+      url: '/applications/bulk',
+      onSuccess: async () => {
+        if (state.currentView === 'applications') await loadApplications();
+        else navigate('applications');
+      }
+    },
+    logs: {
+      title: 'Clear All Audit Logs',
+      prompt: 'Type "DELETE ALL LOGS" to permanently clear ALL system audit logs:',
+      confirmPhrase: 'DELETE ALL LOGS',
+      url: '/audit/logs/bulk',
+      onSuccess: async () => {
+        if (state.currentView === 'audit-logs') await loadAuditLogs();
+        else navigate('audit-logs');
+      }
+    },
+    evaluations: {
+      title: 'Delete All FYP Evaluations',
+      prompt: 'Type "DELETE ALL EVALUATIONS" to permanently delete ALL external examiner evaluations and reset group QR tokens:',
+      confirmPhrase: 'DELETE ALL EVALUATIONS',
+      url: '/evaluations/bulk/all',
+      onSuccess: async () => {
+        if (state.externalEvalProjectId) await loadExternalEvaluations(state.externalEvalProjectId, true);
+        if (state.evalLink?.groupId) await loadEvaluationLink(state.evalLink.groupId, true);
+        if (state.currentView === 'dashboard') render();
+      }
+    }
+  };
+
+  const cfg = configs[type];
+  if (!cfg) return;
+
+  const input = prompt(`${cfg.title}\n\nWARNING: This action is permanent and CANNOT be undone!\n\n${cfg.prompt}`);
+  if (input === null) return;
+
+  if (input.trim() !== cfg.confirmPhrase) {
+    showToast(`Confirmation text did not match "${cfg.confirmPhrase}". Deletion cancelled.`, 'error');
+    return;
+  }
+
+  try {
+    const res = await api(cfg.url, {
+      method: 'DELETE',
+      body: JSON.stringify({ confirm: cfg.confirmPhrase })
+    });
+    showToast(res.message || `${cfg.title} completed successfully.`, 'success');
+    if (cfg.onSuccess) await cfg.onSuccess();
+  } catch (e) {
+    showToast(e.message || 'Bulk deletion failed', 'error');
+  }
+}
+
+async function deleteSingleEvaluation(evalId) {
+  if (!evalId) return;
+  if (!confirm('Are you sure you want to permanently delete this evaluation entry?')) return;
+
+  try {
+    const res = await api(`/evaluations/${evalId}`, { method: 'DELETE' });
+    showToast(res.message || 'Evaluation deleted successfully', 'success');
+    if (state.externalEvalProjectId) {
+      await loadExternalEvaluations(state.externalEvalProjectId, true);
+    }
+    if (state.evalLink?.groupId) {
+      await loadEvaluationLink(state.evalLink.groupId, true);
+    }
+  } catch (e) {
+    showToast(e.message || 'Failed to delete evaluation', 'error');
+  }
+}
+
 // ===== SUPERVISOR Dashboard =====
 function renderSupervisorDashboard() {
   return `
@@ -1631,6 +1817,21 @@ function renderProposals() {
 
     ${state.currentUser && state.currentUser.role === 'student' ? '<div id="proposal-group-banner"></div>' : ''}
     <div id="proposals-list" class="space-y-3">Loading...</div>
+
+    <!-- Danger Zone (Executive only) -->
+    ${isExecutiveRole(state.currentUser?.role) ? `
+    <div class="bg-rose-50 border-2 border-rose-200 rounded-2xl p-5 shadow-sm">
+      <div class="flex items-center gap-2 mb-4">
+        <i class="fas fa-exclamation-triangle text-rose-500"></i>
+        <h3 class="font-bold text-rose-800 text-sm uppercase tracking-wider">Danger Zone</h3>
+      </div>
+      <div class="flex flex-wrap gap-3">
+        <button onclick="bulkDeleteAll('proposals')" class="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm">
+          <i class="fas fa-file-excel"></i> Delete All Proposals
+        </button>
+      </div>
+      <p class="text-xs text-rose-600 mt-3"><i class="fas fa-info-circle mr-1"></i>Permanently deletes all FYP project proposals. This action is irreversible.</p>
+    </div>` : ''}
   </div>`;
 }
 
@@ -2272,6 +2473,10 @@ function renderExternalEvaluationResults() {
             ${score}<span class="text-[10px] text-gray-400 font-bold">/${maxTotal}</span>
           </span>
           <span class="px-2.5 py-0.5 rounded-full text-xs font-bold border ${evaluationGradeClass(ev.grade)}">${escapeHtml(ev.grade || '—')}</span>
+          ${isExecutiveRole(state.currentUser?.role) ? `
+          <button onclick="deleteSingleEvaluation('${ev.id}')" title="Delete this evaluation entry" class="px-2 py-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 border border-rose-200 rounded-lg transition-all text-xs font-bold flex items-center gap-1">
+            <i class="fas fa-trash-alt"></i>
+          </button>` : ''}
         </div>
       </div>
 
@@ -2289,6 +2494,21 @@ function renderExternalEvaluationResults() {
       </div>` : ''}
     </div>`;
   }).join('');
+
+  const bulkDanger = (isExecutiveRole(state.currentUser?.role) && evaluations.length > 0) ? `
+  <div class="p-4 bg-rose-50 border-2 border-rose-200 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 mt-4">
+    <div>
+      <div class="text-xs text-rose-800 font-bold flex items-center gap-1.5 uppercase tracking-wider">
+        <i class="fas fa-exclamation-triangle text-rose-500"></i> Evaluation Danger Zone
+      </div>
+      <p class="text-[11px] text-rose-600 mt-0.5">Delete all submitted evaluations for this project and group permanently.</p>
+    </div>
+    <button onclick="bulkDeleteAll('evaluations')" class="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm shrink-0">
+      <i class="fas fa-trash-alt"></i> Delete All Evaluations
+    </button>
+  </div>` : '';
+
+  return cards + bulkDanger;
 }
 
 // ----- Group profile: issue and share the evaluator QR code -----
@@ -2444,7 +2664,8 @@ function renderEvaluationPanelBody() {
         <button onclick="downloadEvaluationQr()" class="border border-fypilot-200 text-fypilot-700 hover:bg-fypilot-50 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5"><i class="fas fa-download"></i> Download PNG</button>
         <button onclick="printEvaluationQr()" class="border border-gray-200 text-gray-600 hover:bg-gray-50 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5"><i class="fas fa-print"></i> Print QR</button>
         ${['coordinator', 'hod', 'dean', 'admin'].includes(state.currentUser && state.currentUser.role) ? `
-          <button onclick="regenerateEvaluationLink()" class="border border-rose-200 text-rose-600 hover:bg-rose-50 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5"><i class="fas fa-rotate"></i> Rotate link</button>` : ''}
+          <button onclick="regenerateEvaluationLink()" class="border border-rose-200 text-rose-600 hover:bg-rose-50 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5"><i class="fas fa-rotate"></i> Rotate link</button>
+          <button onclick="bulkDeleteAll('evaluations')" class="border border-rose-200 text-rose-600 hover:bg-rose-50 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5"><i class="fas fa-trash-alt"></i> Delete All Evaluations</button>` : ''}
       </div>
     </div>
   </div>`;
@@ -2575,6 +2796,21 @@ function renderProjects() {
     </div>
 
     <div id="projects-list" class="space-y-3">Loading...</div>
+
+    <!-- Danger Zone (Executive only) -->
+    ${isExecutiveRole(state.currentUser?.role) ? `
+    <div class="bg-rose-50 border-2 border-rose-200 rounded-2xl p-5 shadow-sm">
+      <div class="flex items-center gap-2 mb-4">
+        <i class="fas fa-exclamation-triangle text-rose-500"></i>
+        <h3 class="font-bold text-rose-800 text-sm uppercase tracking-wider">Danger Zone</h3>
+      </div>
+      <div class="flex flex-wrap gap-3">
+        <button onclick="bulkDeleteAll('projects')" class="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm">
+          <i class="fas fa-folder-minus"></i> Delete All Projects
+        </button>
+      </div>
+      <p class="text-xs text-rose-600 mt-3"><i class="fas fa-info-circle mr-1"></i>Permanently deletes all active FYP projects, milestones, task logs, and meeting minutes.</p>
+    </div>` : ''}
   </div>`;
 }
 
@@ -7701,6 +7937,21 @@ function renderApplicationsList() {
     <div id="apps-grid-container">
       ${renderApplicationsGrid(filtered)}
     </div>
+
+    <!-- Danger Zone -->
+    ${isExecutiveRole(state.currentUser?.role) ? `
+    <div class="bg-rose-50 border-2 border-rose-200 rounded-2xl p-5 shadow-sm">
+      <div class="flex items-center gap-2 mb-4">
+        <i class="fas fa-exclamation-triangle text-rose-500"></i>
+        <h3 class="font-bold text-rose-800 text-sm uppercase tracking-wider">Danger Zone</h3>
+      </div>
+      <div class="flex flex-wrap gap-3">
+        <button onclick="bulkDeleteAll('applications')" class="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm">
+          <i class="fas fa-file-excel"></i> Delete All Applications
+        </button>
+      </div>
+      <p class="text-xs text-rose-600 mt-3"><i class="fas fa-info-circle mr-1"></i>Deletes every application record permanently. Approved student accounts are not removed.</p>
+    </div>` : ''}
   </div>`;
 }
 
@@ -8535,6 +8786,8 @@ window.openGroupEvaluationQr = openGroupEvaluationQr;
 window.loadEvaluationLink = loadEvaluationLink;
 window.copyEvaluationLink = copyEvaluationLink;
 window.regenerateEvaluationLink = regenerateEvaluationLink;
+window.bulkDeleteAll = bulkDeleteAll;
+window.deleteSingleEvaluation = deleteSingleEvaluation;
 
 // Initial Application Render
 render();
