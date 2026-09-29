@@ -9,7 +9,7 @@ export default defineConfig(({ mode }) => ({
       entry: 'src/index.tsx',
     }),
     devServer({
-      adapter,
+      adapter: () => adapter({ proxy: { configPath: 'wrangler.jsonc', persist: { path: '.wrangler/state/v3' } } }),
       entry: 'src/index.tsx',
     }),
   ],

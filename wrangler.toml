@@ -1,0 +1,9 @@
+name = "fypilot"
+compatibility_date = "2026-07-30"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = "./dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "fypilot-production"
+database_id = "0904bbee-e3ff-42f0-9bce-b2365eb9bcb7"

@@ -72,6 +72,7 @@ userRoutes.delete('/bulk', async (c) => {
  * anyone outside the team.
  */
 async function ensureExecutiveAccounts(db: Env['DB']) {
+  if (!db) return;
   const required = [
     { id: 'coord-1', email: 'rtmea85@gmail.com', name: 'Dr. Admin Coordinator', role: 'coordinator' },
     { id: 'hod-1', email: 'rtmea84@gmail.com', name: 'Dr. HOD', role: 'hod' },
@@ -79,21 +80,23 @@ async function ensureExecutiveAccounts(db: Env['DB']) {
   ];
 
   for (const user of required) {
-    const existing = await db.prepare(
-      'SELECT id FROM users WHERE LOWER(email) = LOWER(?) OR id = ? LIMIT 1'
-    ).bind(user.email, user.id).first();
+    try {
+      const existing = await db.prepare(
+        'SELECT id, email FROM users WHERE id = ? OR LOWER(email) = LOWER(?) LIMIT 1'
+      ).bind(user.id, user.email).first<{ id: string; email: string }>();
 
-    if (!existing) {
-      await db.prepare(
-        `INSERT INTO users (id, email, name, role, department, status, password)
-         VALUES (?, ?, ?, ?, ?, 'active', 'TahaRana@123')`
-      ).bind(user.id, user.email, user.name, user.role, 'Computer Science').run();
-    } else {
-      // Matched by id, so the email is carried over: re-assert the role and
-      // status without reverting a deliberately changed login address.
-      await db.prepare(
-        `UPDATE users SET name = ?, role = ?, department = COALESCE(department, 'Computer Science'), status = COALESCE(status, 'active'), password = COALESCE(password, 'TahaRana@123') WHERE id = ? OR LOWER(email) = LOWER(?)`
-      ).bind(user.name, user.role, user.id, user.email).run();
+      if (!existing) {
+        await db.prepare(
+          `INSERT INTO users (id, email, name, role, department, status, password)
+           VALUES (?, ?, ?, ?, 'Computer Science', 'active', 'TahaRana@123')`
+        ).bind(user.id, user.email, user.name, user.role).run();
+      } else {
+        await db.prepare(
+          `UPDATE users SET email = ?, name = ?, role = ?, department = COALESCE(department, 'Computer Science'), status = 'active', password = COALESCE(password, 'TahaRana@123') WHERE id = ?`
+        ).bind(user.email, user.name, user.role, existing.id).run();
+      }
+    } catch (err) {
+      console.error('ensureExecutiveAccounts error for', user.id, err);
     }
   }
 }
@@ -107,12 +110,22 @@ userRoutes.post('/login', async (c) => {
     return c.json({ success: false, error: 'Email and password are required' }, 400);
   }
 
-  await ensureExecutiveAccounts(c.env.DB);
+  if (c.env && c.env.DB) {
+    await ensureExecutiveAccounts(c.env.DB);
+  }
+
+  const aliasMap: Record<string, string> = {
+    'admin@university.edu': 'rtmea85@gmail.com',
+    'coordinator@university.edu': 'rtmea85@gmail.com',
+    'hod@university.edu': 'rtmea84@gmail.com',
+    'dean@university.edu': 'dev.ranataha@gmail.com',
+  };
+  const normalizedUsername = aliasMap[username.toLowerCase().trim()] || username.trim();
 
   // Look up the user by email or student ID
   const user = await c.env.DB.prepare(
     'SELECT id, email, name, role, department, status, password, avatar FROM users WHERE LOWER(email) = LOWER(?) OR LOWER(student_id_num) = LOWER(?)'
-  ).bind(username, username).first() as Record<string, unknown> | null;
+  ).bind(normalizedUsername, normalizedUsername).first() as Record<string, unknown> | null;
 
   if (user) {
     // Enforce approval status

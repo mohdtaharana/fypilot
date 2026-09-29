@@ -2,9 +2,9 @@
 
 -- Executive Roles
 INSERT OR IGNORE INTO users (id, email, name, role, department, status, password) VALUES
-  ('coord-1', 'admin@university.edu', 'Dr. Admin Coordinator', 'coordinator', 'Computer Science', 'active', 'TahaRana@123'),
-  ('hod-1', 'hod@university.edu', 'Dr. HOD', 'hod', 'Computer Science', 'active', 'TahaRana@123'),
-  ('dean-1', 'dean@university.edu', 'Dr. Dean', 'dean', 'Computer Science', 'active', 'TahaRana@123');
+  ('coord-1', 'rtmea85@gmail.com', 'Dr. Admin Coordinator', 'coordinator', 'Computer Science', 'active', 'TahaRana@123'),
+  ('hod-1', 'rtmea84@gmail.com', 'Dr. HOD', 'hod', 'Computer Science', 'active', 'TahaRana@123'),
+  ('dean-1', 'dev.ranataha@gmail.com', 'Dr. Dean', 'dean', 'Computer Science', 'active', 'TahaRana@123');
 
 -- Supervisors
 INSERT OR IGNORE INTO users (id, email, name, role, department, expertise, research_areas, max_students) VALUES
