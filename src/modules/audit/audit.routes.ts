@@ -158,7 +158,7 @@ auditRoutes.get('/logs/export', async (c) => {
       actionUrl: resolveAppUrl(c.req.url, c.env),
     });
     // Send to administrator / coordinator / HOD
-    sendEmail(c.env, {
+    await sendEmail(c.env, {
       to: 'admin@university.edu',
       subject: `[FYPilot Security Alert] Audit Logs Downloaded (${format.toUpperCase()})`,
       html: alertHtml,

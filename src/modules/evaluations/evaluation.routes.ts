@@ -61,7 +61,7 @@ async function loadGroupContext(db: any, groupId: string) {
   try {
     const group = await db.prepare(
       `SELECT g.id, g.name, g.status, g.leader_id, g.evaluation_token,
-              u.name AS leader_name, u.email AS leader_email
+              u.name AS leader_name, u.email AS leader_email, u.student_id_num AS leader_student_id
        FROM groups g LEFT JOIN users u ON u.id = g.leader_id
        WHERE g.id = ?`
     ).bind(groupId).first() as Record<string, any> | null;
@@ -88,11 +88,14 @@ async function loadGroupContext(db: any, groupId: string) {
     // Supervisor + department are printed in the form's metadata block.
     const supervisor = project
       ? await db.prepare(
-          `SELECT u.name FROM projects p LEFT JOIN users u ON u.id = p.supervisor_id WHERE p.id = ?`
+          `SELECT u.name, u.email FROM projects p LEFT JOIN users u ON u.id = p.supervisor_id WHERE p.id = ?`
         )
           .bind(project.id)
-          .first() as { name?: string } | null
+          .first() as { name?: string; email?: string } | null
       : null;
+
+    const leaderSid = String(group.leader_student_id || '').trim();
+    const leaderEmail = group.leader_email || (leaderSid ? `${leaderSid.toLowerCase()}@stu.smiu.edu.pk` : null);
 
     return {
       group: {
@@ -101,17 +104,22 @@ async function loadGroupContext(db: any, groupId: string) {
         status: group.status,
         leaderId: group.leader_id,
         leaderName: group.leader_name || null,
-        leaderEmail: group.leader_email || null,
+        leaderEmail,
       },
-      members: (members.results || []).map((m: Record<string, any>) => ({
-        id: m.id,
-        name: m.name,
-        email: m.email,
-        studentId: m.student_id_num,
-        isLeader: m.id === group.leader_id,
-      })),
+      members: (members.results || []).map((m: Record<string, any>) => {
+        const sid = String(m.student_id_num || '').trim();
+        const derivedEmail = sid ? `${sid.toLowerCase()}@stu.smiu.edu.pk` : null;
+        return {
+          id: m.id,
+          name: m.name,
+          email: m.email || derivedEmail,
+          studentId: m.student_id_num,
+          isLeader: m.id === group.leader_id,
+        };
+      }),
       project: project ? { id: project.id, title: project.title, description: project.description, status: project.status } : null,
       supervisor: supervisor?.name || null,
+      supervisorEmail: supervisor?.email || null,
     };
   } catch (e) {
     // A malformed query or a transient D1 failure must degrade this request,
@@ -299,13 +307,15 @@ evaluationRoutes.post('/submit', async (c) => {
     degreeSubject,
     presentationDate,
     supervisor: context.supervisor,
+    supervisorEmail: context.supervisorEmail,
+    supervisorName: context.supervisor,
     comments,
     suggestions,
     members: context.members,
     appUrl: resolveAppUrl(c.req.url, c.env),
   };
 
-  notifyEvaluationRecipients(c, summary);
+  await notifyEvaluationRecipients(c, summary);
 
   return c.json({
     success: true,
@@ -316,13 +326,11 @@ evaluationRoutes.post('/submit', async (c) => {
 
 /**
  * Email the final evaluation to every member of the group plus the project
- * leader and coordinator. All members receive the same score, so none of them
- * has to ask anyone else what the mark was.
- *
- * Fire-and-forget so the examiner is not kept waiting on SMTP, with failures
- * logged rather than surfaced (the score is already persisted).
+ * leader, supervisor, examiner, and coordinator.
+ * Awaited with Promise.allSettled so Cloudflare Workers isolates do not terminate
+ * before outbound SMTP requests complete.
  */
-function notifyEvaluationRecipients(c: any, summary: any) {
+async function notifyEvaluationRecipients(c: any, summary: any): Promise<void> {
   const recipientNames = new Map<string, string>();
 
   const addRecipient = (email: unknown, name: unknown) => {
@@ -332,36 +340,54 @@ function notifyEvaluationRecipients(c: any, summary: any) {
     if (!recipientNames.has(address)) recipientNames.set(address, normalizedName || 'Evaluation Recipient');
   };
 
-  (async () => {
-    try {
-      // Every member of the group, so each student is told their own result.
-      for (const member of summary.members || []) {
-        if (member) addRecipient(member.email, member.name);
+  try {
+    // Every member of the group, so each student is told their own result.
+    for (const member of summary.members || []) {
+      if (member) {
+        let memEmail = member.email;
+        if (!memEmail && member.studentId) {
+          memEmail = `${String(member.studentId).trim().toLowerCase()}@stu.smiu.edu.pk`;
+        }
+        addRecipient(memEmail, member.name);
       }
+    }
 
-      // Project leader, if they have a usable email and were not a member.
-      addRecipient(summary.groupLeaderEmail, summary.groupLeaderName);
+    // Project leader, if they have a usable email and were not a member.
+    addRecipient(summary.groupLeaderEmail, summary.groupLeaderName);
 
-      // Everyone holding the coordinator role.
-      const coordinators = await c.env.DB.prepare(
-        `SELECT email, name FROM users WHERE role = 'coordinator' AND email IS NOT NULL AND email != ''`
-      ).all() as { results?: Array<{ email: string; name?: string }> };
-      for (const row of coordinators.results || []) {
-        addRecipient(row.email, row.name);
-      }
+    // Examiner, if provided.
+    if (summary.examinerEmail) {
+      addRecipient(summary.examinerEmail, summary.examinerName);
+    }
 
-      const recipients = [...recipientNames.entries()].map(([email, name]) => ({ email, name }));
-      if (!recipients.length) {
-        console.warn('Evaluation submitted but no member/coordinator email available');
-        return;
-      }
+    // Supervisor, if provided.
+    if (summary.supervisorEmail) {
+      addRecipient(summary.supervisorEmail, summary.supervisorName || summary.supervisor);
+    }
 
-      const subject = `FYP Evaluation — ${summary.groupName ?? 'FYP Group'} — ${summary.total ?? 0}/${summary.maxTotal ?? TOTAL_MAX_MARKS} (${summary.grade ?? 'Not graded'})`;
-      await Promise.all(recipients.map(async (recipient) => {
+    // Everyone holding the coordinator role.
+    const coordinators = await c.env.DB.prepare(
+      `SELECT email, name FROM users WHERE role = 'coordinator' AND email IS NOT NULL AND email != ''`
+    ).all() as { results?: Array<{ email: string; name?: string }> };
+    for (const row of coordinators.results || []) {
+      addRecipient(row.email, row.name);
+    }
+
+    const recipients = [...recipientNames.entries()].map(([email, name]) => ({ email, name }));
+    if (!recipients.length) {
+      console.warn('[Evaluation] Submitted but no member/coordinator email available');
+      return;
+    }
+
+    console.log(`[Evaluation] Sending evaluation results to ${recipients.length} recipient(s):`, recipients.map(r => r.email));
+
+    const subject = `FYP Evaluation — ${summary.groupName ?? 'FYP Group'} — ${summary.total ?? 0}/${summary.maxTotal ?? TOTAL_MAX_MARKS} (${summary.grade ?? 'Not graded'})`;
+    await Promise.allSettled(recipients.map(async (recipient) => {
+      try {
         const personalizedSummary = { ...summary, recipientName: recipient.name };
         const html = buildEvaluationSummaryEmail(personalizedSummary);
         const text = buildEvaluationSummaryText(personalizedSummary);
-        console.log(`[Evaluation] Generated summary email HTML length for ${recipient.email}: ${html.length}`);
+        console.log(`[Evaluation] Sending evaluation email to ${recipient.email} (${recipient.name})...`);
 
         const result = await sendEmail(c.env, {
           to: recipient.email,
@@ -375,11 +401,13 @@ function notifyEvaluationRecipients(c: any, summary: any) {
         } else {
           console.warn(`[Evaluation] Email dispatch failed for ${recipient.email}: ${result?.error || 'unknown'}`);
         }
-      }));
-    } catch (e) {
-      console.error('Evaluation notification error:', e);
-    }
-  })();
+      } catch (err) {
+        console.error(`[Evaluation] Error sending to ${recipient.email}:`, err);
+      }
+    }));
+  } catch (e) {
+    console.error('[Evaluation] notifyEvaluationRecipients error:', e);
+  }
 }
 
 function buildEvaluationSummaryEmail(s: any): string {

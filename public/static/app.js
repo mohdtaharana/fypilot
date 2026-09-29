@@ -2353,11 +2353,15 @@ async function submitEvaluationForm() {
         token: state.evalFormToken,
         scores,
         examiner_name: meta.examiner_name,
+        examiner_id: meta.examiner_id,
+        examiner_designation: meta.examiner_designation,
+        examiner_email: meta.examiner_email,
         department: meta.department,
         degree_subject: meta.degree_subject,
         presentation_date: meta.presentation_date,
         signature_confirmed: true,
         comments: meta.comments,
+        suggestions: meta.suggestions,
       }),
     });
 
