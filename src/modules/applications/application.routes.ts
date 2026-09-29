@@ -39,10 +39,15 @@ function normalizeSubmittedMembers(raw: unknown): { members: Array<{ name: strin
     if (!name && !studentIdNum && !email) continue;
     if (!name) return { members, error: `${label}: Name is required` };
     if (!studentIdNum) return { members, error: `${label}: Student ID is required` };
-    if (!email) return { members, error: `${label}: Email is required so the member can be notified` };
-    if (!EMAIL_RE.test(email)) return { members, error: `${label}: "${email}" is not a valid email address` };
 
-    members.push({ name, student_id_num: studentIdNum, email });
+    let resolvedEmail = email;
+    if (!resolvedEmail && studentIdNum) {
+      resolvedEmail = `${studentIdNum.toLowerCase().replace(/[^a-z0-9]/g, '')}@stu.smiu.edu.pk`;
+    }
+    if (!resolvedEmail) return { members, error: `${label}: Email is required so the member can be notified` };
+    if (!EMAIL_RE.test(resolvedEmail)) return { members, error: `${label}: "${resolvedEmail}" is not a valid email address` };
+
+    members.push({ name, student_id_num: studentIdNum, email: resolvedEmail });
   }
 
   if (members.length > 3) {

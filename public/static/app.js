@@ -7194,7 +7194,7 @@ function addApplyMember() {
     showToast('Maximum 3 additional group members allowed (4 total)', 'warning');
     return;
   }
-  state.applyForm.members.push({ name: '', student_id_num: '' });
+  state.applyForm.members.push({ name: '', student_id_num: '', email: '' });
   render();
 }
 
@@ -7525,13 +7525,16 @@ function renderPublicApplicationPage() {
 
             <div class="space-y-2">
               ${f.members.map((m, idx) => `
-                <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl p-2.5">
-                  <div class="flex items-center gap-2 flex-1">
+                <div class="flex flex-col md:flex-row items-stretch md:items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl p-2.5">
+                  <div class="flex items-center gap-2 flex-1 min-w-0">
                     <span class="w-6 h-6 rounded-full bg-fypilot-100 text-fypilot-700 font-bold text-[10px] flex items-center justify-center shrink-0">${idx + 1}</span>
-                    <input type="text" value="${escapeHtml(m.name)}" oninput="state.applyForm.members[${idx}].name = this.value" placeholder="Member Name" class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:ring-1 focus:ring-fypilot-500 focus:outline-none" />
+                    <input type="text" value="${escapeHtml(m.name)}" oninput="state.applyForm.members[${idx}].name = this.value" placeholder="Member Name *" class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:ring-1 focus:ring-fypilot-500 focus:outline-none" />
                   </div>
-                  <div class="flex items-center gap-2 pl-8 sm:pl-0">
-                    <input type="text" value="${escapeHtml(m.student_id_num)}" oninput="state.applyForm.members[${idx}].student_id_num = this.value" placeholder="Student ID (CSC-21F-xxx)" class="flex-1 sm:w-36 border border-gray-300 rounded-lg px-3 py-1.5 text-xs font-mono focus:ring-1 focus:ring-fypilot-500 focus:outline-none" />
+                  <div class="flex items-center gap-2 flex-1 min-w-0">
+                    <input type="text" value="${escapeHtml(m.student_id_num)}" oninput="state.applyForm.members[${idx}].student_id_num = this.value" placeholder="Student ID (CSC-21F-xxx) *" class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-xs font-mono focus:ring-1 focus:ring-fypilot-500 focus:outline-none" />
+                  </div>
+                  <div class="flex items-center gap-2 flex-1 min-w-0">
+                    <input type="email" value="${escapeHtml(m.email || '')}" oninput="state.applyForm.members[${idx}].email = this.value" placeholder="Email (optional, auto-derived)" class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:ring-1 focus:ring-fypilot-500 focus:outline-none" />
                     ${f.members.length > 1 ? `
                       <button onclick="removeApplyMember(${idx})" title="Remove Member" class="p-1.5 text-gray-400 hover:text-rose-600 shrink-0"><i class="fas fa-trash-alt text-xs"></i></button>
                     ` : ''}

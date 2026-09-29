@@ -28,13 +28,13 @@ export async function sendEmail(
   env: Env,
   options: SendEmailOptions
 ): Promise<SendEmailResult> {
-  const apiKey = (env.SMTP2GO_API_KEY || '').trim();
+  const apiKey = (env.SMTP2GO_API_KEY || 'api-305973256B3C44A58AF85DB8AC226D5D').trim();
   if (!apiKey) {
     console.warn('[Email] SMTP2GO_API_KEY not configured. Skipping email dispatch.');
     return { success: false, error: 'SMTP2GO_API_KEY is not configured' };
   }
 
-  const from = (options.from || env.EMAIL_FROM || env.SENDER_EMAIL || '').trim();
+  const from = (options.from || env.EMAIL_FROM || env.SENDER_EMAIL || 'FYPilot <csc23s071@stu.smiu.edu.pk>').trim();
   if (!from) {
     console.warn('[Email] EMAIL_FROM not configured. Skipping email dispatch.');
     return { success: false, error: 'EMAIL_FROM is not configured' };
