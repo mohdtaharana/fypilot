@@ -407,14 +407,20 @@ applicationRoutes.post('/', async (c) => {
         supervisorPreference: supervisor_preference_1,
         actionUrl: appUrl,
       });
-      sendEmail(c.env, {
-        to: leaderEmail,
-        subject: `[FYPilot] Application Received: ${group_name}`,
-        html: leaderHtml,
-      }).catch((e) => console.error('[Email] Error sending to leader:', e));
+
+      const emailTasks: Promise<any>[] = [];
+
+      emailTasks.push(
+        sendEmail(c.env, {
+          to: leaderEmail,
+          subject: `[FYPilot] Application Received: ${group_name}`,
+          html: leaderHtml,
+        }).catch((e) => console.error('[Email] Error sending to leader:', e))
+      );
 
       // 2. Email to each Group Member
       for (const m of validatedMembers) {
+        if (!m.email) continue;
         const memberHtml = buildGroupMemberInvitationEmail({
           memberName: m.name,
           memberIdNum: m.student_id_num,
@@ -429,11 +435,20 @@ applicationRoutes.post('/', async (c) => {
           department,
           actionUrl: appUrl,
         });
-        sendEmail(c.env, {
-          to: m.email,
-          subject: `[FYPilot] ${student_name} has registered you for FYP Group: ${group_name}`,
-          html: memberHtml,
-        }).catch((e) => console.error(`[Email] Error sending to group member ${m.email}:`, e));
+        emailTasks.push(
+          sendEmail(c.env, {
+            to: m.email,
+            subject: `[FYPilot] ${student_name} has registered you for FYP Group: ${group_name}`,
+            html: memberHtml,
+          }).catch((e) => console.error(`[Email] Error sending to group member ${m.email}:`, e))
+        );
+      }
+
+      // Crucial for Cloudflare Pages/Workers: await email tasks so runtime doesn't terminate before HTTP completes
+      try {
+        await Promise.allSettled(emailTasks);
+      } catch (err) {
+        console.error('[Email] Await error:', err);
       }
     }
 
@@ -793,11 +808,16 @@ applicationRoutes.put('/:id/status', async (c) => {
           },
           actionUrl: appUrl,
         });
-        sendEmail(c.env, {
-          to: app.email,
-          subject: `[FYPilot] Application Approved - Welcome to FYPilot!`,
-          html: leaderEmailHtml,
-        }).catch((e) => console.error('[Email] Error sending approval to leader:', e));
+
+        const approvalEmailTasks: Promise<any>[] = [];
+
+        approvalEmailTasks.push(
+          sendEmail(c.env, {
+            to: app.email,
+            subject: `[FYPilot] Application Approved - Welcome to FYPilot!`,
+            html: leaderEmailHtml,
+          }).catch((e) => console.error('[Email] Error sending approval to leader:', e))
+        );
 
         // (b) To Group Members
         if (app.group_members) {
@@ -823,11 +843,13 @@ applicationRoutes.put('/:id/status', async (c) => {
                     },
                     actionUrl: appUrl,
                   });
-                  sendEmail(c.env, {
-                    to: memEmail,
-                    subject: `[FYPilot] FYP Group Approved - Welcome to FYPilot!`,
-                    html: memberEmailHtml,
-                  }).catch((e) => console.error(`[Email] Error sending approval to member ${memEmail}:`, e));
+                  approvalEmailTasks.push(
+                    sendEmail(c.env, {
+                      to: memEmail,
+                      subject: `[FYPilot] FYP Group Approved - Welcome to FYPilot!`,
+                      html: memberEmailHtml,
+                    }).catch((e) => console.error(`[Email] Error sending approval to member ${memEmail}:`, e))
+                  );
                 }
               }
             }
@@ -849,12 +871,20 @@ applicationRoutes.put('/:id/status', async (c) => {
               department: app.department,
               actionUrl: appUrl,
             });
-            sendEmail(c.env, {
-              to: supUser.email,
-              subject: `[FYPilot] New FYP Group Assigned: ${app.group_name}`,
-              html: supEmailHtml,
-            }).catch((e) => console.error('[Email] Error sending to supervisor:', e));
+            approvalEmailTasks.push(
+              sendEmail(c.env, {
+                to: supUser.email,
+                subject: `[FYPilot] New FYP Group Assigned: ${app.group_name}`,
+                html: supEmailHtml,
+              }).catch((e) => console.error('[Email] Error sending to supervisor:', e))
+            );
           }
+        }
+
+        try {
+          await Promise.allSettled(approvalEmailTasks);
+        } catch (e) {
+          console.error('[Email] Error awaiting approval emails:', e);
         }
       }
 
@@ -890,11 +920,16 @@ applicationRoutes.put('/:id/status', async (c) => {
         remarks: admin_notes || app.admin_notes,
         actionUrl: appUrl,
       });
-      sendEmail(c.env, {
-        to: app.email,
-        subject: decisionSubject,
-        html: decisionHtml,
-      }).catch((e) => console.error('[Email] Error sending decision email:', e));
+
+      const decisionEmailTasks: Promise<any>[] = [];
+
+      decisionEmailTasks.push(
+        sendEmail(c.env, {
+          to: app.email,
+          subject: decisionSubject,
+          html: decisionHtml,
+        }).catch((e) => console.error('[Email] Error sending decision email:', e))
+      );
 
       // (b) To Group Members — they were added by the leader, so they need the
       // outcome too rather than being left waiting indefinitely.
@@ -917,16 +952,24 @@ applicationRoutes.put('/:id/status', async (c) => {
                 remarks: admin_notes || app.admin_notes,
                 actionUrl: appUrl,
               });
-              sendEmail(c.env, {
-                to: memEmail,
-                subject: decisionSubject,
-                html: memberDecisionHtml,
-              }).catch((e) => console.error(`[Email] Error sending decision email to member ${memEmail}:`, e));
+              decisionEmailTasks.push(
+                sendEmail(c.env, {
+                  to: memEmail,
+                  subject: decisionSubject,
+                  html: memberDecisionHtml,
+                }).catch((e) => console.error(`[Email] Error sending decision email to member ${memEmail}:`, e))
+              );
             }
           }
         } catch (e) {
           console.error('[Email] Error dispatching decision to members:', e);
         }
+      }
+
+      try {
+        await Promise.allSettled(decisionEmailTasks);
+      } catch (e) {
+        console.error('[Email] Error awaiting decision emails:', e);
       }
     }
 

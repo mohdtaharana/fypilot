@@ -137,6 +137,7 @@ async function callSmtp2GoApi(
   text?: string
 ): Promise<{ success: boolean; id?: string; error?: string; status?: number }> {
   try {
+    console.log(`[Email] Dispatching to: ${to.join(', ')} | Subject: "${subject}"`);
     const res = await fetch('https://api.smtp2go.com/v3/email/send', {
       method: 'POST',
       headers: {
@@ -145,6 +146,7 @@ async function callSmtp2GoApi(
         'accept': 'application/json',
       },
       body: JSON.stringify({
+        api_key: apiKey,
         sender,
         to,
         subject,
@@ -154,6 +156,7 @@ async function callSmtp2GoApi(
     });
 
     const data = (await res.json().catch(() => ({}))) as any;
+    console.log(`[Email] SMTP2GO status: ${res.status}, response:`, JSON.stringify(data));
 
     if (!res.ok) {
       const errMsg = data?.data?.error || data?.error || data?.message || `HTTP ${res.status}`;
@@ -169,8 +172,9 @@ async function callSmtp2GoApi(
       return { success: false, error: reasons, status: res.status };
     }
 
-    return { success: true, id: data?.data?.request_id, status: res.status };
+    return { success: true, id: data?.data?.request_id || data?.data?.email_id, status: res.status };
   } catch (err: any) {
+    console.error('[Email] SMTP2GO network error:', err);
     return { success: false, error: err?.message || 'Network error' };
   }
 }
