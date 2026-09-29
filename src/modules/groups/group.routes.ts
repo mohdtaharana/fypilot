@@ -2,12 +2,53 @@ import { Hono } from 'hono';
 import type { Env } from '../ai/ai.types';
 import { generateId } from '../ai/ai.utils';
 import { deleteGroupsCascade } from '../../utils/cascade';
+import { requireBulkDeleteRole } from '../../utils/bulk-guard';
 import { createNotification, notifyRole } from '../notifications/notification.routes';
 import { logAuditEvent } from '../audit/audit.routes';
 
 const groupRoutes = new Hono<{ Bindings: Env }>();
 const EXECUTIVE_ROLES = new Set(['coordinator', 'hod', 'dean']);
 const isExecutiveRole = (role?: string | null) => !!role && EXECUTIVE_ROLES.has(role);
+
+// DELETE /api/groups/bulk — remove EVERY group.
+// Registered before `/:id` so the literal path is matched first.
+groupRoutes.delete('/bulk', async (c) => {
+  const actor = await requireBulkDeleteRole(c);
+  if (!actor) {
+    return c.json({ success: false, error: 'Only coordinators, HOD, Dean or admins can delete all groups' }, 403);
+  }
+
+  const body = await c.req.json().catch(() => ({} as any));
+  if (body?.confirm !== 'DELETE ALL GROUPS') {
+    return c.json({ success: false, error: 'Confirmation phrase did not match' }, 400);
+  }
+
+  try {
+    const rows = await c.env.DB.prepare('SELECT id, name FROM groups').all();
+    const groups = (rows.results || []) as Array<Record<string, any>>;
+    if (groups.length === 0) {
+      return c.json({ success: true, message: 'There are no groups to delete.', deleted: 0 });
+    }
+
+    await deleteGroupsCascade(c.env.DB, groups.map((g) => g.id));
+
+    await logAuditEvent(c.env.DB, actor.userId, actor.role, 'groups_deleted_all', {
+      entityType: 'group',
+      entityId: '*',
+      details: `All ${groups.length} group(s) deleted`,
+      metadata: { scope: 'all', deleted_count: groups.length, group_ids: groups.map((g) => g.id) },
+    });
+
+    return c.json({
+      success: true,
+      message: `All ${groups.length} group(s) and their linked proposals and projects were deleted.`,
+      deleted: groups.length,
+    });
+  } catch (e: any) {
+    console.error('Delete all groups error:', e);
+    return c.json({ success: false, error: 'Failed to delete all groups: ' + (e?.message || 'unknown error') }, 500);
+  }
+});
 
 async function upsertGroupMemberAccount(db: any, member: any, fallbackDepartment?: string | null) {
   const cleaned = member && typeof member === 'object' ? member : {};
@@ -173,7 +214,11 @@ groupRoutes.get('/:id', async (c) => {
      WHERE gm.group_id = ? ORDER BY is_leader DESC, u.name`
   ).bind(id).all();
 
-  return c.json({ success: true, data: { ...group, members: members.results } });
+  // `g.*` also carries evaluation_token, the unguessable secret behind the
+  // public examiner form. Members must never see it, so it is stripped here.
+  const { evaluation_token: _evaluationToken, ...safeGroup } = group as Record<string, unknown>;
+
+  return c.json({ success: true, data: { ...safeGroup, members: members.results } });
 });
 
 // POST /api/groups — student creates a group (becomes leader), max 4, min 1

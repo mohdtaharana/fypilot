@@ -175,6 +175,21 @@ const state = {
   peerPresence: null,
   chatListTimer: null,
   chatMsgTimer: null,
+  // External FYP evaluation state
+  evalPayload: null,
+  evalScores: {},
+  evalFormToken: null,
+  evalSubmitting: false,
+  evalLink: null,
+  evalLinkLoading: false,
+  evalMaxTotal: null,
+  externalEvaluations: null,
+  externalEvalSections: [],
+  externalEvalMax: null,
+  externalEvalLoading: false,
+  externalEvalError: null,
+  externalEvalProjectId: null,
+  projectGroupId: null,
 };
 
 
@@ -276,6 +291,13 @@ function render() {
   if (window.location.pathname === '/apply' || state.currentView === 'apply') {
     app.innerHTML = renderPublicApplicationPage();
     attachApplicationFormListeners();
+    return;
+  }
+
+  // The external examiner opens this from a scanned QR code, so it renders
+  // before any authentication check.
+  if (window.location.pathname.startsWith('/evaluate/')) {
+    renderPublicEvaluationPage(app);
     return;
   }
 
@@ -1801,6 +1823,746 @@ function renderProposalDetail() {
   </div>`;
 }
 
+// ===== External FYP Evaluation (QR form + results) =====
+// The rubric, its maxima and its field metadata all come from
+// GET /api/evaluations/criteria, which is generated from the same server module
+// that validates the submission. The form therefore cannot drift from the
+// printed document, and the totals shown here are always recomputed from the
+// criteria the examiner actually awarded.
+
+/** section key -> fyp_evaluations column holding that section's subtotal. */
+const EVAL_SECTION_TOTAL_FIELDS = [
+  { key: 'project_content', column: 'content_total' },
+  { key: 'technical_proficiency', column: 'technical_total' },
+  { key: 'presentation_skills', column: 'presentation_total' },
+  { key: 'report_quality', column: 'report_total' },
+  { key: 'teamwork', column: 'teamwork_total' },
+  { key: 'overall_impact', column: 'impact_total' },
+];
+
+function evaluationGradeClass(grade) {
+  return {
+    'A+': 'bg-emerald-100 text-emerald-800 border-emerald-200',
+    A: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    B: 'bg-blue-100 text-blue-800 border-blue-200',
+    C: 'bg-amber-100 text-amber-800 border-amber-200',
+    D: 'bg-orange-100 text-orange-800 border-orange-200',
+    F: 'bg-rose-100 text-rose-800 border-rose-200',
+  }[grade] || 'bg-gray-100 text-gray-700 border-gray-200';
+}
+
+/** Grade band used by the live footer preview. Mirrors gradeForScore() server-side. */
+function gradeForScore(total) {
+  if (total >= 90) return 'A+';
+  if (total >= 80) return 'A';
+  if (total >= 70) return 'B';
+  if (total >= 60) return 'C';
+  if (total >= 50) return 'D';
+  return 'F';
+}
+
+function clampScore(value, max) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.min(max, Math.max(0, n));
+}
+
+/**
+ * Recompute every section subtotal and the grand total from state.evalScores.
+ *
+ * Section subtotals use the printed maxima of their own criteria. The grand
+ * total is the plain sum of what the examiner awarded, shown against
+ * `totalMax` (100) — no scaling or weighting, so 77 awarded reads 77/100.
+ * Mirrors scoreEvaluation() server-side.
+ */
+function recomputeEvaluationTotals(sections) {
+  const sectionTotals = {};
+  let total = 0;
+  for (const section of sections) {
+    let sum = 0;
+    for (const field of section.fields) {
+      sum += clampScore(state.evalScores[field.key] ?? 0, field.max);
+    }
+    sectionTotals[section.key] = sum;
+    total += sum;
+  }
+  return { sectionTotals, total };
+}
+
+// ----- Public evaluator form (opened from a scanned QR code) -----
+
+function renderPublicEvaluationPage(app) {
+  const token = window.location.pathname.split('/').filter(Boolean)[1] || '';
+  app.innerHTML = `
+    <div class="min-h-screen bg-gradient-to-br from-slate-900 via-fypilot-900 to-indigo-950 py-6 px-4 sm:px-6">
+      <div class="max-w-3xl mx-auto" id="evaluation-form-root">
+        <div class="text-center text-white/80 text-sm py-16">
+          <i class="fas fa-spinner fa-spin text-2xl mb-3 block"></i>Loading evaluation form&hellip;
+        </div>
+      </div>
+    </div>`;
+  loadEvaluationForm(token);
+}
+
+async function loadEvaluationForm(token) {
+  const root = document.getElementById('evaluation-form-root');
+  if (!root) return;
+  if (!/^[0-9a-f]{32}$/.test(token)) {
+    root.innerHTML = evaluationFormMessage('This evaluation link is not valid', 'fa-link-slash');
+    return;
+  }
+
+  try {
+    const res = await api(`/evaluations/form/${token}`, { silentError: true });
+    state.evalFormToken = token;
+    state.evalPayload = res.data;
+    state.evalScores = {};
+    root.innerHTML = renderEvaluationFormMarkup();
+    attachEvaluationFormListeners();
+  } catch (e) {
+    root.innerHTML = evaluationFormMessage(e.message || 'This evaluation link is not valid', 'fa-link-slash');
+  }
+}
+
+function evaluationFormMessage(message, icon = 'fa-triangle-exclamation') {
+  return `
+    <div class="bg-white rounded-2xl shadow-xl p-8 text-center fade-in">
+      <i class="fas ${icon} text-3xl text-rose-500 mb-3 block"></i>
+      <p class="text-sm font-bold text-gray-900">${escapeHtml(message)}</p>
+      <p class="text-xs text-gray-500 mt-2">Please ask your coordinator for a fresh evaluation QR code.</p>
+    </div>`;
+}
+
+function renderEvaluationFormMarkup() {
+  const d = state.evalPayload;
+  if (!d || !d.criteria) return evaluationFormMessage('Evaluation form unavailable', 'fa-circle-exclamation');
+  const { criteria } = d;
+  const maxTotal = criteria.totalMax || 100;
+  const group = d.group || {};
+  const members = d.members || [];
+  const project = d.project || {};
+
+  const headerValues = {
+    members: members.map((m) => `${m.name} (${m.studentId || 'ID pending'})`).join('\n') || 'No members listed',
+    project_title: project.title || 'Untitled Project',
+    supervisor: d.supervisor || 'Not assigned',
+  };
+
+  const headerInputs = (criteria.headerFields || []).map((f) => {
+    const span = f.span === 2 ? 'sm:col-span-2' : '';
+    if (f.type === 'readonly') {
+      return `
+      <div class="${span}">
+        <label class="block text-[11px] font-bold text-gray-600 mb-1">${escapeHtml(f.label)}</label>
+        <div class="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-700 whitespace-pre-line min-h-[2.5rem]">${escapeHtml(headerValues[f.key] || '\u2014')}</div>
+      </div>`;
+    }
+    if (f.type === 'select') {
+      const options = (f.options || []).map((option) =>
+        `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`
+      ).join('');
+      return `
+      <div class="${span}">
+        <label class="block text-[11px] font-bold text-gray-600 mb-1">${escapeHtml(f.label)}${f.required ? ' <span class="text-rose-500">*</span>' : ''}</label>
+        <select data-eval-meta="${escapeHtml(f.key)}" ${f.required ? 'required' : ''}
+                class="w-full px-3 py-2 bg-white border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none">
+          <option value="">Select department</option>
+          ${options}
+        </select>
+      </div>`;
+    }
+    return `
+      <div class="${span}">
+        <label class="block text-[11px] font-bold text-gray-600 mb-1">${escapeHtml(f.label)}${f.required ? ' <span class="text-rose-500">*</span>' : ''}</label>
+        <input type="${f.type === 'date' ? 'date' : 'text'}"
+               data-eval-meta="${escapeHtml(f.key)}"
+               ${f.required ? 'required' : ''}
+               placeholder="${escapeHtml(f.placeholder || '')}"
+               class="w-full px-3 py-2 bg-white border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none" />
+      </div>`;
+  }).join('');
+
+  const sections = (criteria.sections || []).map((s, idx) => `
+    <div class="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm space-y-4">
+      <div class="flex items-center justify-between gap-3 border-b border-gray-100 pb-3">
+        <h3 class="font-bold text-gray-900 text-sm flex items-center gap-2">
+          <span class="w-6 h-6 rounded-lg bg-fypilot-100 text-fypilot-700 flex items-center justify-center text-[11px] font-extrabold">${idx + 1}</span>
+          <i class="fas ${escapeHtml(s.icon)} text-fypilot-500 text-xs"></i>${escapeHtml(s.label)}
+        </h3>
+        <span class="text-[11px] font-bold text-gray-500"><span id="eval-sec-${escapeHtml(s.key)}">0</span>/${s.max}</span>
+      </div>
+      ${s.fields.map((f) => `
+        <div class="flex items-center justify-between gap-4">
+          <label class="text-xs text-gray-700 flex-1 min-w-0">${escapeHtml(f.label)}</label>
+          <input type="number" inputmode="numeric" min="0" max="${f.max}" step="1" value="0"
+                 data-eval-score="${escapeHtml(f.key)}"
+                 class="w-20 px-2.5 py-1.5 text-right text-sm font-bold bg-gray-50 border border-gray-300 rounded-xl focus:ring-2 focus:ring-fypilot-500 focus:outline-none" />
+          <span class="text-[11px] text-gray-400 font-semibold w-8">/${f.max}</span>
+        </div>`).join('')}
+    </div>`).join('');
+
+  const footerFields = (criteria.footerFields || []).map((f) => {
+    if (f.type === 'textarea') {
+      return `
+      <div>
+        <label class="block text-[11px] font-bold text-gray-600 mb-1">${escapeHtml(f.label)}</label>
+        <textarea data-eval-meta="comments" rows="3" placeholder="${escapeHtml(f.placeholder || '')}"
+                  class="w-full px-3 py-2 bg-white border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none resize-y"></textarea>
+      </div>`;
+    }
+    if (f.type === 'computed') {
+      return `
+      <div>
+        <label class="block text-[11px] font-bold text-gray-600 mb-1">${escapeHtml(f.label)}</label>
+        <div class="w-full px-3 py-2 bg-fypilot-50 border border-fypilot-200 rounded-xl text-sm font-extrabold text-fypilot-800">
+          <span id="eval-field-${escapeHtml(f.key)}">&mdash;</span>
+        </div>
+      </div>`;
+    }
+    if (f.type === 'signature') {
+      return `
+      <label class="flex items-start gap-2.5 p-3 rounded-xl border border-gray-200 bg-gray-50 cursor-pointer">
+        <input type="checkbox" data-eval-meta="signature_confirmed" class="mt-0.5 w-4 h-4 rounded border-gray-300 text-fypilot-600 focus:ring-fypilot-500" />
+        <span class="text-xs text-gray-700">${escapeHtml(f.label)} <span class="text-rose-500">*</span><span class="block text-[10px] text-gray-400 mt-0.5">Tick to confirm the paper carries your signature.</span></span>
+      </label>`;
+    }
+    return `
+      <div>
+        <label class="block text-[11px] font-bold text-gray-600 mb-1">${escapeHtml(f.label)}${f.required ? ' <span class="text-rose-500">*</span>' : ''}</label>
+        <input type="text" data-eval-meta="${escapeHtml(f.key)}" ${f.required ? 'required' : ''}
+               placeholder="${escapeHtml(f.placeholder || '')}"
+               class="w-full px-3 py-2 bg-white border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-fypilot-500 focus:outline-none" />
+      </div>`;
+  }).join('');
+
+  return `
+  <div class="bg-white rounded-2xl shadow-2xl overflow-hidden fade-in">
+    <div class="bg-gradient-to-r from-fypilot-900 via-indigo-900 to-slate-900 text-white px-5 sm:px-7 py-5">
+      <div class="flex items-center gap-3">
+        <img src="/images/fypilotlogo.png" alt="FYPilot" class="w-10 h-10 object-contain bg-white/10 rounded-xl p-1" />
+        <div>
+          <p class="text-[11px] font-bold uppercase tracking-wider text-fypilot-300">External Evaluation Form</p>
+          <h1 class="text-lg sm:text-xl font-bold leading-tight">${escapeHtml(group.name || 'FYP Group')}</h1>
+        </div>
+      </div>
+    </div>
+
+    <div class="p-5 sm:p-7 space-y-6">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 rounded-2xl bg-gray-50 border border-gray-200">
+        ${headerInputs}
+      </div>
+
+      <div class="flex items-center justify-between gap-3 px-4 py-3 rounded-2xl bg-fypilot-50 border border-fypilot-200 sticky top-2 z-10">
+        <span class="text-xs font-bold text-fypilot-800">Total Marks Obtained</span>
+        <span class="text-xl font-extrabold text-fypilot-800">
+          <span id="eval-total-live">0</span><span class="text-sm text-fypilot-500">/${maxTotal}</span>
+        </span>
+      </div>
+
+      <div class="space-y-4">${sections}</div>
+
+      <div class="rounded-2xl border border-gray-200 bg-gray-50 p-5 space-y-4">
+        <h3 class="font-bold text-gray-900 text-sm">Declaration</h3>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">${footerFields}</div>
+      </div>
+
+      <button id="eval-submit-btn" onclick="submitEvaluationForm()"
+              class="w-full bg-gradient-to-r from-fypilot-600 to-indigo-600 hover:from-fypilot-700 hover:to-indigo-700 text-white font-bold py-3 rounded-xl text-sm shadow-lg shadow-fypilot-500/25 transition-all flex items-center justify-center gap-2">
+        <i class="fas fa-paper-plane"></i> Submit Evaluation
+      </button>
+      <p class="text-[10px] text-gray-400 text-center">Scores are validated on the server. The total above is the plain sum of the marks awarded.</p>
+    </div>
+  </div>`;
+}
+
+function attachEvaluationFormListeners() {
+  for (const input of document.querySelectorAll('[data-eval-score]')) {
+    input.addEventListener('input', () => {
+      const max = Number(input.getAttribute('max')) || 0;
+      let value = Number(input.value);
+      if (!Number.isFinite(value)) value = 0;
+      if (value < 0) { value = 0; input.value = 0; }
+      if (value > max) { value = max; input.value = max; }
+      state.evalScores[input.dataset.evalScore] = value;
+      updateEvaluationFormTotals();
+    });
+  }
+  updateEvaluationFormTotals();
+}
+
+function updateEvaluationFormTotals() {
+  const criteria = state.evalPayload && state.evalPayload.criteria;
+  if (!criteria) return;
+  const maxTotal = criteria.totalMax || 100;
+  const { sectionTotals, total } = recomputeEvaluationTotals(criteria.sections || []);
+
+  const totalEl = document.getElementById('eval-total-live');
+  if (totalEl) totalEl.textContent = String(total);
+
+  for (const s of criteria.sections || []) {
+    const el = document.getElementById(`eval-sec-${s.key}`);
+    if (el) el.textContent = String(sectionTotals[s.key]);
+  }
+
+  const totalField = document.getElementById('eval-field-total');
+  if (totalField) totalField.textContent = `${total} / ${maxTotal}`;
+
+  const gradeField = document.getElementById('eval-field-grade');
+  if (gradeField) {
+    const grade = gradeForScore(total);
+    gradeField.textContent = grade;
+    gradeField.className = `px-2.5 py-0.5 rounded-full text-xs font-bold border ${evaluationGradeClass(grade)}`;
+  }
+}
+
+async function submitEvaluationForm() {
+  const criteria = state.evalPayload && state.evalPayload.criteria;
+  if (!criteria || state.evalSubmitting) return;
+
+  const scores = {};
+  for (const s of criteria.sections || []) {
+    for (const f of s.fields) {
+      const value = clampScore(state.evalScores[f.key] ?? 0, f.max);
+      if (value <= 0) {
+        showToast(`Please award marks for "${f.label}"`, 'warning');
+        return;
+      }
+      scores[f.key] = value;
+    }
+  }
+
+  const meta = {};
+  for (const el of document.querySelectorAll('[data-eval-meta]')) {
+    const key = el.dataset.evalMeta;
+    meta[key] = el.type === 'checkbox' ? el.checked : String(el.value || '').trim();
+  }
+  if (meta.signature_confirmed !== true) {
+    showToast('Please confirm the examiner signature', 'warning');
+    return;
+  }
+
+  const btn = document.getElementById('eval-submit-btn');
+  state.evalSubmitting = true;
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Submitting&hellip;'; }
+
+  try {
+    const res = await api('/evaluations/submit', {
+      method: 'POST',
+      body: JSON.stringify({
+        token: state.evalFormToken,
+        scores,
+        examiner_name: meta.examiner_name,
+        department: meta.department,
+        degree_subject: meta.degree_subject,
+        presentation_date: meta.presentation_date,
+        signature_confirmed: true,
+        comments: meta.comments,
+      }),
+    });
+
+    const root = document.getElementById('evaluation-form-root');
+    const d = res.data || {};
+    if (root) {
+      root.innerHTML = `
+        <div class="bg-white rounded-2xl shadow-xl p-8 text-center fade-in">
+          <i class="fas fa-circle-check text-4xl text-emerald-500 mb-3 block"></i>
+          <h2 class="text-lg font-bold text-gray-900">Evaluation submitted</h2>
+          <p class="text-sm text-gray-600 mt-1">
+            ${escapeHtml(d.total)}/${escapeHtml(String(d.maxTotal))} &bull; Grade <b>${escapeHtml(d.grade)}</b>
+          </p>
+          <p class="text-xs text-gray-500 mt-3">You may close this page.</p>
+        </div>`;
+    }
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-paper-plane"></i> Submit Evaluation'; }
+    state.evalSubmitting = false;
+    showToast(e.message || 'Could not submit the evaluation', 'error');
+  }
+}
+
+// ----- Shared results: supervisor, staff and students read the same records -----
+
+async function loadExternalEvaluations(projectId, force = false) {
+  if (!projectId) return;
+  if (!force && state.externalEvalProjectId === projectId && (state.externalEvaluations || state.externalEvalError)) return;
+
+  state.externalEvalProjectId = projectId;
+  state.externalEvalLoading = true;
+  renderExternalEvaluationsInto('external-evaluations-card');
+
+  try {
+    const res = await api(`/evaluations/project/${projectId}`, { silentError: true });
+    state.externalEvaluations = res.data.evaluations || [];
+    state.externalEvalSections = res.data.sections || [];
+    state.externalEvalMax = res.data.maxTotal || 100;
+    state.externalEvalError = null;
+  } catch (e) {
+    state.externalEvaluations = null;
+    state.externalEvalError = e.message || 'Could not load evaluation results';
+  } finally {
+    state.externalEvalLoading = false;
+    renderExternalEvaluationsInto('external-evaluations-card');
+  }
+}
+
+function renderExternalEvaluationsInto(cardId) {
+  const host = document.getElementById(cardId);
+  if (!host) return;
+  const body = host.querySelector('[data-eval-results]');
+  if (body) body.innerHTML = renderExternalEvaluationResults();
+}
+
+function renderExternalEvaluationResults() {
+  if (state.externalEvalLoading) {
+    return '<p class="text-xs text-gray-400 italic py-2"><i class="fas fa-spinner fa-spin mr-1.5"></i>Loading evaluation results&hellip;</p>';
+  }
+  if (state.externalEvalError) {
+    return `<p class="text-xs text-amber-600 italic py-2"><i class="fas fa-triangle-exclamation mr-1.5"></i>${escapeHtml(state.externalEvalError)}</p>`;
+  }
+
+  const evaluations = state.externalEvaluations || [];
+  if (!evaluations.length) {
+    return `
+    <div class="text-center py-6 px-4 border border-dashed border-gray-200 rounded-2xl bg-gray-50">
+      <i class="fas fa-qrcode text-2xl text-gray-300 mb-2 block"></i>
+      <p class="text-xs text-gray-500 font-semibold">No external evaluation submitted yet</p>
+      <p class="text-[11px] text-gray-400 mt-1">Share the group&rsquo;s evaluation QR with the external examiner &mdash; their score appears here as soon as they submit.</p>
+    </div>`;
+  }
+
+  const maxTotal = state.externalEvalMax || 100;
+  const sectionByKey = {};
+  for (const s of state.externalEvalSections || []) sectionByKey[s.key] = s;
+
+  return evaluations.map((ev) => {
+    const score = Number(ev.total_score || 0);
+    const breakdown = EVAL_SECTION_TOTAL_FIELDS.map(({ key, column }) => {
+      const section = sectionByKey[key];
+      const value = Number(ev[column] || 0);
+      const max = section ? section.max : 0;
+      const pct = max > 0 ? Math.round((value / max) * 100) : 0;
+      return `
+      <div>
+        <div class="flex items-center justify-between gap-2 text-[11px]">
+          <span class="text-gray-600 font-semibold truncate">${escapeHtml(section ? section.label : key)}</span>
+          <span class="text-gray-500 font-bold shrink-0">${value}/${max}</span>
+        </div>
+        <div class="h-1.5 mt-1 rounded-full bg-gray-200 overflow-hidden">
+          <div class="h-full bg-fypilot-500 rounded-full" style="width:${pct}%"></div>
+        </div>
+      </div>`;
+    }).join('');
+
+    return `
+    <div class="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 space-y-3">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div class="min-w-0">
+          <p class="text-sm font-bold text-gray-900 flex items-center gap-2 min-w-0">
+            <i class="fas fa-user-tie text-indigo-600"></i>
+            <span class="truncate">${escapeHtml(ev.examiner_name || 'External examiner')}</span>
+          </p>
+          <p class="text-[11px] text-gray-500 mt-0.5">
+            ${escapeHtml(ev.department || 'External Examiner')}${ev.degree_subject ? ` &bull; B.Sc. ${escapeHtml(ev.degree_subject)}` : ''}
+            ${ev.presentation_date ? ` &bull; ${escapeHtml(ev.presentation_date)}` : ''}
+          </p>
+          <p class="text-[10px] text-gray-400 font-mono mt-0.5">Submitted ${new Date(ev.created_at || ev.evaluation_date || Date.now()).toLocaleString()}</p>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <span class="px-2.5 py-1 rounded-xl bg-fypilot-50 text-fypilot-700 text-xs font-extrabold border border-fypilot-200">
+            ${score}<span class="text-[10px] text-gray-400 font-bold">/${maxTotal}</span>
+          </span>
+          <span class="px-2.5 py-0.5 rounded-full text-xs font-bold border ${evaluationGradeClass(ev.grade)}">${escapeHtml(ev.grade || '—')}</span>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2.5 pt-1">${breakdown}</div>
+
+      ${ev.comments ? `
+      <div class="pt-2 border-t border-gray-100">
+        <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Examiner comments</p>
+        <p class="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap">${escapeHtml(ev.comments)}</p>
+      </div>` : ''}
+      ${ev.suggestions ? `
+      <div class="pt-2 border-t border-gray-100">
+        <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Suggestions</p>
+        <p class="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap">${escapeHtml(ev.suggestions)}</p>
+      </div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+// ----- Group profile: issue and share the evaluator QR code -----
+
+async function loadEvaluationLink(groupId, force = false) {
+  if (!groupId) return;
+  if (!force && state.evalLink && state.evalLink.groupId === groupId) return;
+
+  state.evalLinkLoading = true;
+  renderEvaluationLinkInto('evaluation-qr-panel');
+  try {
+    const res = await api(`/evaluations/link/${groupId}`, { silentError: true });
+    state.evalLink = res.data;
+  } catch (e) {
+    state.evalLink = null;
+  } finally {
+    state.evalLinkLoading = false;
+    renderEvaluationLinkInto('evaluation-qr-panel');
+  }
+}
+
+function renderEvaluationLinkInto(panelId) {
+  const host = document.getElementById(panelId);
+  if (!host) return;
+  host.innerHTML = renderEvaluationPanelBody();
+  drawEvaluationQr();
+}
+
+/**
+ * The QR library is bundled from the `qrcode` npm package and served from our
+ * own origin, so this works with no internet at all. The shell loads it with
+ * `defer`, which can land after app.js, so wait for that tag when it is
+ * present and otherwise inject it on demand. The timeout means a stalled or
+ * already-finished tag can never leave the panel waiting forever.
+ */
+const QR_LIB_SRC = '/static/vendor/qrcode.min.js?v=20260929-1';
+let qrLibPromise = null;
+
+function qrLibReady() {
+  return !!(window.QRCode && typeof window.QRCode.toCanvas === 'function');
+}
+
+function loadQrLib() {
+  if (qrLibReady()) return Promise.resolve(window.QRCode);
+  if (qrLibPromise) return qrLibPromise;
+
+  qrLibPromise = new Promise((resolve, reject) => {
+    const finish = () => {
+      if (qrLibReady()) resolve(window.QRCode);
+      else reject(new Error('QR library loaded but toCanvas is missing'));
+    };
+    const fail = () => reject(new Error('QR library failed to load'));
+
+    // Belt and braces: never leave the caller hanging on a dead tag.
+    const timer = setTimeout(fail, 6000);
+
+    const existing = document.querySelector('script[data-qr-lib]');
+    const target = existing || (() => {
+      const tag = document.createElement('script');
+      tag.src = QR_LIB_SRC;
+      tag.async = true;
+      tag.dataset.qrLib = '1';
+      document.head.appendChild(tag);
+      return tag;
+    })();
+
+    target.addEventListener('load', () => { clearTimeout(timer); finish(); });
+    target.addEventListener('error', () => { clearTimeout(timer); fail(); });
+  });
+
+  // Let a later attempt retry if the first load failed.
+  qrLibPromise.catch(() => { qrLibPromise = null; });
+  return qrLibPromise;
+}
+
+/** Shared so the on-screen code and the downloaded PNG look identical. */
+function qrRenderOptions(size) {
+  return {
+    width: size,
+    margin: 2,
+    errorCorrectionLevel: 'M',
+    color: { dark: '#0f172a', light: '#ffffff' },
+  };
+}
+
+/**
+ * Draw the evaluator link as a QR code. The library is local, so this
+ * succeeds offline; if it somehow cannot, the copyable link beside it still
+ * lets the examiner open the form.
+ */
+async function drawEvaluationQr() {
+  const canvas = document.getElementById('evaluation-qr-canvas');
+  const link = state.evalLink;
+  if (!canvas || !link || !link.url) return;
+
+  try {
+    const lib = await loadQrLib();
+    // The panel may have been re-rendered while the library was loading.
+    if (!document.body.contains(canvas)) return;
+    await lib.toCanvas(canvas, link.url, qrRenderOptions(176));
+  } catch (e) {
+    console.error('QR generation failed:', e);
+  }
+}
+
+/** Jump from a project straight to the group&rsquo;s QR panel. */
+async function openGroupEvaluationQr() {
+  const groupId = state.projectGroupId;
+  if (!groupId) {
+    showToast('This project is not linked to a group yet', 'warning');
+    return;
+  }
+  await loadGroupDetail(groupId);
+  setTimeout(() => {
+    const panel = document.getElementById('evaluation-qr-panel');
+    if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, 250);
+}
+
+function renderEvaluationPanelBody() {
+  if (state.evalLinkLoading) {
+    return '<p class="text-xs text-gray-400 italic py-2"><i class="fas fa-spinner fa-spin mr-1.5"></i>Preparing evaluation link&hellip;</p>';
+  }
+
+  const link = state.evalLink;
+  if (!link) {
+    return `
+    <div class="text-center py-6 px-4 border border-dashed border-gray-200 rounded-2xl bg-gray-50">
+      <i class="fas fa-qrcode text-2xl text-gray-300 mb-2 block"></i>
+      <p class="text-xs text-gray-500 font-semibold">Evaluation link unavailable</p>
+      <p class="text-[11px] text-gray-400 mt-1">Only coordinators, HODs, Deans and admins can issue an evaluation link.</p>
+    </div>`;
+  }
+
+  return `
+  <div class="flex flex-col sm:flex-row gap-5 sm:items-start">
+    <div class="shrink-0 mx-auto sm:mx-0 p-3 bg-white border-2 border-fypilot-200 rounded-2xl">
+      <div class="w-44 h-44 flex items-center justify-center">
+        <canvas id="evaluation-qr-canvas" width="176" height="176" class="w-44 h-44 block"></canvas>
+      </div>
+    </div>
+    <div class="min-w-0 flex-1 space-y-3">
+      <div>
+        <p class="text-xs font-bold text-gray-900">External Examiner Evaluation</p>
+        <p class="text-[11px] text-gray-500 mt-0.5">${link.evaluationCount || 0} submission${link.evaluationCount === 1 ? '' : 's'} received. Print or share this QR so the examiner can score the group on their phone.</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <input readonly value="${escapeHtml(link.url)}" class="flex-1 min-w-0 px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl text-[11px] font-mono text-gray-700" />
+        <button onclick="copyEvaluationLink()" class="shrink-0 bg-fypilot-600 hover:bg-fypilot-700 text-white px-3 py-2 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5"><i class="fas fa-copy"></i> Copy</button>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <button onclick="openEvaluationLink()" class="bg-fypilot-600 hover:bg-fypilot-700 text-white px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5"><i class="fas fa-external-link-alt"></i> Open Link</button>
+        <button onclick="downloadEvaluationQr()" class="border border-fypilot-200 text-fypilot-700 hover:bg-fypilot-50 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5"><i class="fas fa-download"></i> Download PNG</button>
+        <button onclick="printEvaluationQr()" class="border border-gray-200 text-gray-600 hover:bg-gray-50 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5"><i class="fas fa-print"></i> Print QR</button>
+        ${['coordinator', 'hod', 'dean', 'admin'].includes(state.currentUser && state.currentUser.role) ? `
+          <button onclick="regenerateEvaluationLink()" class="border border-rose-200 text-rose-600 hover:bg-rose-50 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5"><i class="fas fa-rotate"></i> Rotate link</button>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+/** Open the evaluator form itself, to prove the link works before printing it. */
+function openEvaluationLink() {
+  const link = state.evalLink;
+  if (!link || !link.url) return;
+  window.open(link.url, '_blank', 'noopener');
+}
+
+function evaluationQrFileName() {
+  const link = state.evalLink;
+  const base = String((link && (link.groupName || 'group')) || 'group')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'group';
+  const date = new Date().toISOString().slice(0, 10);
+  return `fyp-eval-qr-${base}-${date}.png`;
+}
+
+/**
+ * Save the QR as a PNG. Rendered at 1024px rather than reusing the on-screen
+ * canvas so it stays sharp when the coordinator prints or pastes it.
+ */
+async function downloadEvaluationQr() {
+  const link = state.evalLink;
+  if (!link || !link.url) return;
+
+  let dataUrl = '';
+  try {
+    const lib = await loadQrLib();
+    dataUrl = await lib.toDataURL(link.url, qrRenderOptions(1024));
+  } catch (e) {
+    // Fall back to whatever is already on screen rather than failing outright.
+    const canvas = document.getElementById('evaluation-qr-canvas');
+    if (canvas) dataUrl = canvas.toDataURL('image/png');
+  }
+
+  if (!dataUrl) {
+    showToast('QR code is still loading, try again in a moment', 'warning');
+    return;
+  }
+
+  try {
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = evaluationQrFileName();
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    showToast('QR code downloaded', 'success');
+  } catch (e) {
+    showToast('Could not download the QR code', 'error');
+  }
+}
+
+/** Print just the QR card, not the whole dashboard. */
+function printEvaluationQr() {
+  const link = state.evalLink;
+  if (!link) return;
+  const panel = document.getElementById('evaluation-qr-panel');
+  if (!panel) return;
+
+  const w = window.open('', '_blank', 'width=680,height=820');
+  if (!w) {
+    showToast('Allow pop-ups to print the QR code', 'warning');
+    return;
+  }
+  w.document.write(`<!DOCTYPE html><html><head><title>Evaluation QR</title>
+    <style>
+      body{font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;padding:28px;text-align:center;color:#111827}
+      h1{font-size:18px;margin:0 0 4px}
+      p.sub{font-size:12px;color:#64748b;margin:0 0 18px}
+      .card{display:inline-block;padding:18px;border:2px solid #0e7490;border-radius:18px}
+      .url{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10px;color:#475569;margin-top:14px;word-break:break-all}
+      @media print{body{padding:0}}
+    </style></head><body>
+    <h1>${escapeHtml(link.groupName || 'Group')}</h1>
+    <p class="sub">External Examiner Evaluation</p>
+    <div class="card"><img alt="" id="qr"></div>
+    <div class="url">${escapeHtml(link.url || '')}</div>
+    <script src="${QR_LIB_SRC}"></script>
+    <script>
+      QRCode.toDataURL(${JSON.stringify(link.url || '')}, { width: 320, margin: 2, color: { dark: '#0f172a', light: '#ffffff' } })
+        .then(function (d) { document.getElementById('qr').src = d; })
+        .catch(function () {});
+    </script>
+  </body></html>`);
+  w.document.close();
+  w.focus();
+  setTimeout(() => w.print(), 700);
+}
+
+async function copyEvaluationLink() {
+  const link = state.evalLink;
+  if (!link) return;
+  try {
+    await navigator.clipboard.writeText(link.url);
+    showToast('Evaluation link copied', 'success');
+  } catch (e) {
+    showToast('Could not copy the link', 'error');
+  }
+}
+
+async function regenerateEvaluationLink() {
+  const link = state.evalLink;
+  if (!link) return;
+  if (!window.confirm('Rotate the evaluation link? Any previously printed QR code will stop working.')) return;
+  try {
+    const res = await api(`/evaluations/link/${link.groupId}/regenerate`, { method: 'POST' });
+    state.evalLink = { ...(state.evalLink || {}), ...res.data, evaluationCount: 0 };
+    renderEvaluationLinkInto('evaluation-qr-panel');
+    showToast(res.message || 'New evaluation link generated', 'success');
+  } catch (e) { /* handled by api helper */ }
+}
+
 // ===== Projects List =====
 function renderProjects() {
   return `
@@ -2068,36 +2830,47 @@ function renderProjectDetail() {
       </div>
     </div>
 
-    <!-- Student Evaluations & Performance -->
-    <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm space-y-4">
+    <!-- External / QR Evaluation results -->
+    <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm space-y-4" id="external-evaluations-card">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h3 class="font-bold text-gray-900 flex items-center gap-2"><i class="fas fa-star text-amber-500"></i> Student Evaluations &amp; Grading</h3>
-          <p class="text-[11px] text-gray-500 mt-0.5">Formal supervisor feedback, performance evaluation &amp; scoring.</p>
+          <p class="text-[11px] text-gray-500 mt-0.5">Scores submitted by the external examiner through the evaluation QR form.</p>
         </div>
-        ${(state.currentUser.role === 'supervisor' || isExecutiveRole(state.currentUser.role)) ? `
-          <button onclick="showStudentEvaluationModal('${p.id}')" class="bg-amber-600 hover:bg-amber-700 text-white font-bold px-3.5 py-2 rounded-xl text-xs shadow-sm transition-all flex items-center gap-1.5 shrink-0 self-start sm:self-auto">
-            <i class="fas fa-award"></i> Evaluate Student
+        <div class="flex flex-wrap gap-2 shrink-0 self-start sm:self-auto">
+          <button onclick="loadExternalEvaluations('${p.id}', true)" class="border border-gray-200 text-gray-600 hover:bg-gray-50 px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5">
+            <i class="fas fa-rotate"></i> Refresh
           </button>
-        ` : ''}
+          ${(state.currentUser.role === 'supervisor' || isExecutiveRole(state.currentUser.role)) ? `
+            <button onclick="openGroupEvaluationQr()" class="bg-amber-600 hover:bg-amber-700 text-white font-bold px-3.5 py-2 rounded-xl text-xs shadow-sm transition-all flex items-center gap-1.5">
+              <i class="fas fa-qrcode"></i> External / QR Evaluation
+            </button>
+          ` : ''}
+        </div>
       </div>
 
-      <div class="space-y-3">
-        ${(p.evaluations || []).length ? p.evaluations.map(ev => `
-          <div class="p-4 rounded-2xl border border-amber-200/70 bg-amber-50/30 space-y-2">
-            <div class="flex items-center justify-between">
-              <div class="flex items-center gap-2">
-                <span class="font-bold text-gray-900 text-sm"><i class="fas fa-user-graduate text-indigo-600 mr-1.5"></i>${escapeHtml(ev.student_name || 'Student')}</span>
-                ${ev.grade ? `<span class="bg-emerald-100 text-emerald-800 text-xs font-bold px-2.5 py-0.5 rounded-full border border-emerald-200">Grade: ${escapeHtml(ev.grade)}</span>` : ''}
-                ${ev.score !== null && ev.score !== undefined ? `<span class="bg-blue-100 text-blue-800 text-xs font-bold px-2.5 py-0.5 rounded-full border border-blue-200">Score: ${ev.score}/100</span>` : ''}
+      <div data-eval-results class="space-y-3">${renderExternalEvaluationResults()}</div>
+
+      ${(p.evaluations || []).length ? `
+      <details class="text-xs text-gray-500 border-t border-gray-100 pt-3">
+        <summary class="cursor-pointer font-semibold text-gray-400 hover:text-gray-600">Earlier supervisor feedback (${p.evaluations.length})</summary>
+        <div class="space-y-3 mt-3">
+          ${p.evaluations.map(ev => `
+            <div class="p-4 rounded-2xl border border-amber-200/70 bg-amber-50/30 space-y-2">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <span class="font-bold text-gray-900 text-sm"><i class="fas fa-user-graduate text-indigo-600 mr-1.5"></i>${escapeHtml(ev.student_name || 'Student')}</span>
+                  ${ev.grade ? `<span class="bg-emerald-100 text-emerald-800 text-xs font-bold px-2.5 py-0.5 rounded-full border border-emerald-200">Grade: ${escapeHtml(ev.grade)}</span>` : ''}
+                  ${ev.score !== null && ev.score !== undefined ? `<span class="bg-blue-100 text-blue-800 text-xs font-bold px-2.5 py-0.5 rounded-full border border-blue-200">Score: ${ev.score}/100</span>` : ''}
+                </div>
+                <span class="text-[10px] text-gray-400 font-mono">${new Date(ev.created_at || ev.evaluation_date).toLocaleDateString()}</span>
               </div>
-              <span class="text-[10px] text-gray-400 font-mono">${new Date(ev.created_at || ev.evaluation_date).toLocaleDateString()}</span>
+              <p class="text-xs text-gray-700 leading-relaxed">${escapeHtml(ev.comments)}</p>
+              <p class="text-[10px] text-gray-400 italic">Evaluated by: ${escapeHtml(ev.supervisor_name || 'Supervisor')}</p>
             </div>
-            <p class="text-xs text-gray-700 leading-relaxed">${escapeHtml(ev.comments)}</p>
-            <p class="text-[10px] text-gray-400 italic">Evaluated by: ${escapeHtml(ev.supervisor_name || 'Supervisor')}</p>
-          </div>
-        `).join('') : '<p class="text-xs text-gray-400">No evaluations submitted yet.</p>'}
-      </div>
+          `).join('')}
+        </div>
+      </details>` : ''}
     </div>
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
@@ -3432,7 +4205,12 @@ async function loadProjectDetail(id) {
     ]);
     state.selectedProject = res.data;
     state.supervisors = supervisorsRes.data || [];
+    // The group owning this project, so the QR panel can be opened from here.
+    state.projectGroupId = (res.data && res.data.group_id) || null;
     navigate('project-detail', res.data);
+    // External examiner results are a separate, slower request; the page is
+    // already interactive while they load.
+    loadExternalEvaluations(id, true);
   } catch (e) {
     console.error('Failed to load project:', e);
   }
@@ -3568,6 +4346,17 @@ function renderGroupProfile() {
     <div class="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-xs text-emerald-700 flex items-start gap-2">
       <i class="fas fa-check-circle mt-0.5"></i>
       <span><b>Group approved!</b> The group leader can now submit one joint FYP proposal that covers all ${members.length} members.</span>
+    </div>` : ''}
+
+    ${isExecutive ? `
+    <div class="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+      <div class="flex items-center justify-between gap-3">
+        <h2 class="font-bold text-gray-900"><i class="fas fa-qrcode text-fypilot-500 mr-2"></i>External Examiner Evaluation</h2>
+        <button onclick="loadEvaluationLink('${g.id}', true)" class="text-xs bg-fypilot-50 text-fypilot-700 border border-fypilot-200 px-3 py-1.5 rounded-xl hover:bg-fypilot-100 font-semibold transition-colors flex items-center gap-1.5">
+          <i class="fas fa-rotate"></i> Refresh
+        </button>
+      </div>
+      <div id="evaluation-qr-panel" class="mt-4">${renderEvaluationPanelBody()}</div>
     </div>` : ''}
   </div>`;
 }
@@ -3760,6 +4549,10 @@ async function loadGroupDetail(id) {
     const res = await api(`/groups/${id}`);
     state.selectedGroup = res.data;
     navigate('group-profile', res.data);
+    // The evaluation QR is staff-only, so it loads separately from the profile.
+    if (isExecutiveRole(state.currentUser.role) || state.currentUser.role === 'supervisor') {
+      loadEvaluationLink(id, true);
+    }
   } catch (e) {
     console.error('Failed to load group:', e);
   }
@@ -7592,114 +8385,6 @@ async function submitVerifyMeeting(projectId, meetingId, action) {
   } catch (e) {}
 }
 
-function showStudentEvaluationModal(projectId) {
-  const p = state.selectedProject;
-  const members = p ? (p.members || []) : [];
-
-  const existing = document.getElementById('eval-modal-overlay');
-  if (existing) existing.remove();
-
-  const overlay = document.createElement('div');
-  overlay.id = 'eval-modal-overlay';
-  overlay.className = 'fixed inset-0 z-[150] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4';
-
-  overlay.innerHTML = `
-  <div class="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto no-scrollbar scrollbar-none fade-in">
-    <div class="p-5 border-b border-gray-100 flex items-center justify-between bg-amber-50 rounded-t-3xl">
-      <div>
-        <span class="text-xs font-bold text-amber-700 flex items-center gap-1.5"><i class="fas fa-award"></i> Performance Evaluation</span>
-        <h3 class="font-bold text-base text-gray-900 mt-0.5">Evaluate Project Student</h3>
-      </div>
-      <button onclick="document.getElementById('eval-modal-overlay').remove()" class="w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-200 flex items-center justify-center">
-        <i class="fas fa-times"></i>
-      </button>
-    </div>
-
-    <div class="p-5 space-y-4 text-xs">
-      <div>
-        <label class="block font-bold text-gray-700 mb-1">Select Student <span class="text-rose-500">*</span></label>
-        <select id="eval-student" class="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none">
-          ${members.map(m => `<option value="${m.id}">${escapeHtml(m.name)} (${m.email})</option>`).join('')}
-        </select>
-      </div>
-
-      <div class="grid grid-cols-2 gap-3">
-        <div>
-          <label class="block font-bold text-gray-700 mb-1">Performance Grade</label>
-          <select id="eval-grade" class="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none">
-            <option value="A+">A+ (Outstanding)</option>
-            <option value="A" selected>A (Excellent)</option>
-            <option value="B+">B+ (Very Good)</option>
-            <option value="B">B (Good)</option>
-            <option value="C">C (Satisfactory)</option>
-            <option value="D">D (Needs Improvement)</option>
-            <option value="F">F (Fail)</option>
-          </select>
-        </div>
-        <div>
-          <label class="block font-bold text-gray-700 mb-1">Score (0-100)</label>
-          <input id="eval-score" type="number" min="0" max="100" value="85" class="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none" />
-        </div>
-      </div>
-
-      <div>
-        <label class="block font-bold text-gray-700 mb-1">Evaluation Comments &amp; Feedback <span class="text-rose-500">*</span></label>
-        <textarea id="eval-comments" rows="4" placeholder="Write comprehensive evaluation comments regarding student progress, technical skills, and teamwork..." class="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:outline-none resize-none"></textarea>
-      </div>
-    </div>
-
-    <div class="px-5 pb-5 flex gap-2 justify-end">
-      <button onclick="document.getElementById('eval-modal-overlay').remove()" class="border border-gray-200 text-gray-600 font-bold px-4 py-2 rounded-xl text-xs hover:bg-gray-50 transition-all">
-        Cancel
-      </button>
-      <button onclick="submitStudentEvaluation('${projectId}')" class="bg-amber-600 hover:bg-amber-700 text-white font-bold px-5 py-2 rounded-xl text-xs shadow-md transition-all flex items-center gap-1.5">
-        <i class="fas fa-save"></i> Save Evaluation
-      </button>
-    </div>
-  </div>`;
-
-  document.body.appendChild(overlay);
-}
-
-async function submitStudentEvaluation(projectId) {
-  const studentSelect = document.getElementById('eval-student');
-  const gradeSelect = document.getElementById('eval-grade');
-  const scoreInput = document.getElementById('eval-score');
-  const commentsInput = document.getElementById('eval-comments');
-
-  const student_id = studentSelect ? studentSelect.value : '';
-  const grade = gradeSelect ? gradeSelect.value : 'A';
-  const score = scoreInput ? parseInt(scoreInput.value, 10) : 85;
-  const comments = commentsInput ? commentsInput.value.trim() : '';
-
-  if (!student_id) {
-    showToast('Please select a student', 'warning');
-    return;
-  }
-
-  if (!comments) {
-    showToast('Evaluation comments are required', 'warning');
-    if (commentsInput) commentsInput.focus();
-    return;
-  }
-
-  try {
-    const res = await api(`/projects/${projectId}/evaluations`, {
-      method: 'POST',
-      body: JSON.stringify({ student_id, grade, score, comments })
-    });
-
-    if (res.success) {
-      showToast(res.message || 'Student evaluation saved successfully!', 'success');
-      const o = document.getElementById('eval-modal-overlay');
-      if (o) o.remove();
-      loadProjectDetail(projectId);
-    }
-  } catch (e) {
-    console.error('Error saving evaluation:', e);
-  }
-}
-
 async function showStudentProfileModal(studentId) {
   try {
     const res = await api(`/users/${studentId}/student-profile`);
@@ -7839,11 +8524,17 @@ window.submitWeeklyUpdate = submitWeeklyUpdate;
 window.submitWeeklyFeedback = submitWeeklyFeedback;
 window.submitRecordMeeting = submitRecordMeeting;
 window.submitVerifyMeeting = submitVerifyMeeting;
-window.submitStudentEvaluation = submitStudentEvaluation;
 window.showRecordMeetingModal = showRecordMeetingModal;
 window.showVerifyMeetingModal = showVerifyMeetingModal;
-window.showStudentEvaluationModal = showStudentEvaluationModal;
 window.showStudentProfileModal = showStudentProfileModal;
+
+// External FYP evaluation (QR form + shared results)
+window.submitEvaluationForm = submitEvaluationForm;
+window.loadExternalEvaluations = loadExternalEvaluations;
+window.openGroupEvaluationQr = openGroupEvaluationQr;
+window.loadEvaluationLink = loadEvaluationLink;
+window.copyEvaluationLink = copyEvaluationLink;
+window.regenerateEvaluationLink = regenerateEvaluationLink;
 
 // Initial Application Render
 render();

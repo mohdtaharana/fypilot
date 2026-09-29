@@ -2,10 +2,70 @@ import { Hono } from 'hono';
 import type { Env } from '../ai/ai.types';
 import { generateId } from '../ai/ai.utils';
 import { logAuditEvent } from '../audit/audit.routes';
+import { requireBulkDeleteRole } from '../../utils/bulk-guard';
 import { createNotification, notifyRole } from '../notifications/notification.routes';
+import {
+  sendEmail,
+  resolveAppUrl,
+  buildGroupMemberInvitationEmail,
+  buildApplicationSubmittedLeaderEmail,
+  buildApplicationDecisionEmail,
+  buildSupervisorAssignedEmail,
+} from '../../utils/email';
 
 const EXECUTIVE_ROLES = new Set(['coordinator', 'hod', 'dean']);
 const isExecutiveRole = (role?: string | null) => !!role && EXECUTIVE_ROLES.has(role);
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+/**
+ * Normalizes a raw group_members payload into a clean, validated list.
+ * Blank rows (the form always renders one empty slot) are dropped so they are
+ * not persisted or emailed. Any partially filled row is rejected loudly, since
+ * a member without an email can never be notified.
+ */
+function normalizeSubmittedMembers(raw: unknown): { members: Array<{ name: string; student_id_num: string; email: string }>; error?: string } {
+  const members: Array<{ name: string; student_id_num: string; email: string }> = [];
+  if (raw === undefined || raw === null) return { members };
+  if (!Array.isArray(raw)) return { members, error: 'Group members must be a list' };
+
+  for (let i = 0; i < raw.length; i++) {
+    const m = (raw[i] || {}) as Record<string, any>;
+    const name = String(m.name ?? m.student_name ?? '').trim();
+    const studentIdNum = String(m.student_id_num ?? m.student_id ?? '').trim();
+    const email = String(m.email ?? '').trim().toLowerCase();
+    const label = `Group member ${i + 1}`;
+
+    if (!name && !studentIdNum && !email) continue;
+    if (!name) return { members, error: `${label}: Name is required` };
+    if (!studentIdNum) return { members, error: `${label}: Student ID is required` };
+    if (!email) return { members, error: `${label}: Email is required so the member can be notified` };
+    if (!EMAIL_RE.test(email)) return { members, error: `${label}: "${email}" is not a valid email address` };
+
+    members.push({ name, student_id_num: studentIdNum, email });
+  }
+
+  if (members.length > 3) {
+    return { members, error: 'A maximum of 3 additional group members is allowed (4 total)' };
+  }
+
+  return { members };
+}
+
+/**
+ * Resolve a member's email. New submissions always carry an explicit email, but
+ * applications stored before this was made mandatory may only have a student ID,
+ * so the legacy derived address is kept as a fallback.
+ */
+function resolveMemberEmail(m: Record<string, any>, studentIdNum: string): string | null {
+  const explicit = String(m?.email ?? '').trim().toLowerCase();
+  if (explicit && EMAIL_RE.test(explicit)) return explicit;
+  if (studentIdNum) {
+    const derived = `${studentIdNum.toLowerCase().replace(/[^a-z0-9]/g, '')}@stu.smiu.edu.pk`;
+    return EMAIL_RE.test(derived) ? derived : null;
+  }
+  return null;
+}
 
 async function cleanupBrokenApprovalReferences(db: Env['DB']) {
   try {
@@ -189,6 +249,13 @@ applicationRoutes.post('/', async (c) => {
       return c.json({ success: false, error: 'Preference 1 Supervisor is required' }, 400);
     }
 
+    // 9b. Group Members — name, student ID and email are all required so every
+    // member can actually receive their registration notification.
+    const { members: validatedMembers, error: membersError } = normalizeSubmittedMembers(group_members);
+    if (membersError) {
+      return c.json({ success: false, error: membersError }, 400);
+    }
+
     // 10. Check uniqueness of email and student_id_num
     const existingEmailApp = await c.env.DB.prepare(
       'SELECT id FROM student_applications WHERE email = ? AND status != "rejected"'
@@ -211,8 +278,28 @@ applicationRoutes.post('/', async (c) => {
       return c.json({ success: false, error: 'An application with this Student ID has already been submitted.' }, 409);
     }
 
+    // A Student ID may belong to only ONE user, in any state. Block if this ID is
+    // already taken by an existing (active/pending/rejected) account — otherwise a
+    // second person could register with the same Student ID and the approval step
+    // would resolve to the wrong account.
+    if (student_id) {
+      const sidOwner = await c.env.DB.prepare(
+        `SELECT id, name, email, status FROM users
+         WHERE student_id_num IS NOT NULL AND TRIM(student_id_num) = ?`
+      ).bind(student_id).first() as Record<string, any> | null;
+      if (sidOwner) {
+        return c.json({
+          success: false,
+          error: sidOwner.status === 'pending'
+            ? 'This Student ID already has a pending registration request.'
+            : 'This Student ID is already registered to another user.',
+          existing_status: sidOwner.status
+        }, 409);
+      }
+    }
+
     const appId = generateId();
-    const membersJson = JSON.stringify(Array.isArray(group_members) ? group_members : []);
+    const membersJson = JSON.stringify(validatedMembers);
 
     const isUrgent = typeof supervisor_priority === 'string' && supervisor_priority.toLowerCase().includes('urgent');
     const dbPriority = isUrgent ? 'Urgent' : 'Normal';
@@ -300,6 +387,51 @@ applicationRoutes.post('/', async (c) => {
       ref_id: appId
     });
 
+    // Email Notifications (Asynchronous dispatch via SMTP2GO)
+    if (c.env.SMTP2GO_API_KEY) {
+      const appUrl = resolveAppUrl(c.req.url, c.env);
+      const leaderEmail = email.toLowerCase().trim();
+
+      // 1. Email to Student Leader
+      const leaderHtml = buildApplicationSubmittedLeaderEmail({
+        leaderName: student_name,
+        groupName: group_name,
+        projectTitle: project_title,
+        memberCount: validatedMembers.length,
+        memberNames: validatedMembers.map((m) => m.name),
+        supervisorPreference: supervisor_preference_1,
+        actionUrl: appUrl,
+      });
+      sendEmail(c.env, {
+        to: leaderEmail,
+        subject: `[FYPilot] Application Received: ${group_name}`,
+        html: leaderHtml,
+      }).catch((e) => console.error('[Email] Error sending to leader:', e));
+
+      // 2. Email to each Group Member
+      for (const m of validatedMembers) {
+        const memberHtml = buildGroupMemberInvitationEmail({
+          memberName: m.name,
+          memberIdNum: m.student_id_num,
+          memberEmail: m.email,
+          leaderName: student_name,
+          leaderEmail: leaderEmail,
+          leaderStudentId: student_id,
+          groupName: group_name,
+          projectTitle: project_title,
+          program,
+          shift,
+          department,
+          actionUrl: appUrl,
+        });
+        sendEmail(c.env, {
+          to: m.email,
+          subject: `[FYPilot] ${student_name} has registered you for FYP Group: ${group_name}`,
+          html: memberHtml,
+        }).catch((e) => console.error(`[Email] Error sending to group member ${m.email}:`, e));
+      }
+    }
+
     return c.json({
       success: true,
       data: {
@@ -320,6 +452,61 @@ applicationRoutes.post('/', async (c) => {
   } catch (err: any) {
     console.error('Submit application error:', err);
     return c.json({ success: false, error: err?.message || 'Failed to submit application' }, 500);
+  }
+});
+
+// DELETE /api/applications/bulk — remove EVERY student application.
+// Registered before `/:id` so the literal path is matched first.
+applicationRoutes.delete('/bulk', async (c) => {
+  const actor = await requireBulkDeleteRole(c);
+  if (!actor) {
+    return c.json({ success: false, error: 'Only coordinators, HOD, Dean or admins can delete all applications' }, 403);
+  }
+
+  const body = await c.req.json().catch(() => ({} as any));
+  if (body?.confirm !== 'DELETE ALL APPLICATIONS') {
+    return c.json({ success: false, error: 'Confirmation phrase did not match' }, 400);
+  }
+
+  try {
+    const rows = await c.env.DB.prepare('SELECT id FROM student_applications').all();
+    const apps = (rows.results || []) as Array<Record<string, any>>;
+    if (apps.length === 0) {
+      return c.json({ success: true, message: 'There are no applications to delete.', deleted: 0 });
+    }
+
+    // Applications are standalone (no foreign keys), but approved ones already
+    // produced real accounts — clear those so no orphan accounts remain.
+    const ids = apps.map((a) => a.id);
+    const idsJson = JSON.stringify(ids);
+    const emails = await c.env.DB.prepare('SELECT email, student_id_num FROM student_applications').all();
+
+    await c.env.DB.batch([
+      c.env.DB.prepare('DELETE FROM student_applications WHERE id IN (SELECT value FROM json_each(?))').bind(idsJson),
+    ]);
+
+    for (const row of (emails.results || []) as Array<Record<string, any>>) {
+      if (!row.email && !row.student_id_num) continue;
+      await c.env.DB.prepare(
+        `DELETE FROM users WHERE role = 'student' AND status != 'active' AND (email = ? OR student_id_num = ?)`
+      ).bind(row.email || '', row.student_id_num || '').run();
+    }
+
+    await logAuditEvent(c.env.DB, actor.userId, actor.role, 'applications_deleted_all', {
+      entityType: 'student_application',
+      entityId: '*',
+      details: `All ${apps.length} student application(s) deleted`,
+      metadata: { scope: 'all', deleted_count: apps.length, application_ids: ids },
+    });
+
+    return c.json({
+      success: true,
+      message: `All ${apps.length} application(s) were deleted.`,
+      deleted: apps.length,
+    });
+  } catch (e: any) {
+    console.error('Delete all applications error:', e);
+    return c.json({ success: false, error: 'Failed to delete all applications: ' + (e?.message || 'unknown error') }, 500);
   }
 });
 
@@ -396,18 +583,48 @@ applicationRoutes.put('/:id/status', async (c) => {
 
       // 1. Create Student User Account
       let studentId = generateId();
-      const existingUser = await c.env.DB.prepare('SELECT id FROM users WHERE LOWER(email) = LOWER(?) OR student_id_num = ?').bind(app.email, app.student_id_num).first();
-      
+      // Resolve strictly by Student ID (the unique identity). Matching on
+      // `email OR student_id_num` could attach the approval to an unrelated
+      // account and overwrite its student ID.
+      const sidOwner = await c.env.DB.prepare(
+        `SELECT id, email FROM users
+         WHERE student_id_num IS NOT NULL AND TRIM(student_id_num) = ?`
+      ).bind(app.student_id_num).first() as Record<string, any> | null;
+
+      // Fall back to the pending account created at application-submit time,
+      // but only when it is genuinely this applicant (same email, no other ID).
+      const emailOwner = await c.env.DB.prepare(
+        'SELECT id, email, student_id_num FROM users WHERE LOWER(email) = LOWER(?)'
+      ).bind(app.email).first() as Record<string, any> | null;
+      const emailOwnerIsSamePerson = emailOwner &&
+        String(emailOwner.student_id_num || '').trim() === String(app.student_id_num || '').trim();
+
+      const existingUser = sidOwner || (emailOwnerIsSamePerson ? emailOwner : null);
+
       if (existingUser) {
         studentId = existingUser.id as string;
         await c.env.DB.prepare(
           `UPDATE users SET status = 'active', role = 'student', department = ?, student_id_num = ?, program = ?, shift = ?, password = COALESCE(password, ?) WHERE id = ?`
         ).bind(app.department, app.student_id_num, app.program, app.shift, provisioned_password, studentId).run();
       } else {
-        await c.env.DB.prepare(
-          `INSERT INTO users (id, email, name, role, department, student_id_num, program, shift, status, password)
-           VALUES (?, ?, ?, 'student', ?, ?, ?, ?, 'active', ?)`
-        ).bind(studentId, app.email, app.student_name, app.department, app.student_id_num, app.program, app.shift, provisioned_password).run();
+        try {
+          await c.env.DB.prepare(
+            `INSERT INTO users (id, email, name, role, department, student_id_num, program, shift, status, password)
+             VALUES (?, ?, ?, 'student', ?, ?, ?, ?, 'active', ?)`
+          ).bind(studentId, app.email, app.student_name, app.department, app.student_id_num, app.program, app.shift, provisioned_password).run();
+        } catch (e) {
+          // Unique index (0017) rejected a duplicate — re-resolve and reuse the owner.
+          const msg = String((e as Error)?.message || e);
+          if (!/UNIQUE constraint failed/i.test(msg)) throw e;
+          const owner = await c.env.DB.prepare(
+            `SELECT id FROM users WHERE student_id_num IS NOT NULL AND TRIM(student_id_num) = ?`
+          ).bind(app.student_id_num).first() as Record<string, any> | null;
+          if (!owner) throw e;
+          studentId = owner.id as string;
+          await c.env.DB.prepare(
+            `UPDATE users SET status = 'active', role = 'student', department = ?, program = ?, shift = ?, password = COALESCE(password, ?) WHERE id = ?`
+          ).bind(app.department, app.program, app.shift, provisioned_password, studentId).run();
+        }
       }
 
       // 2. Create FYP Group
@@ -427,30 +644,55 @@ applicationRoutes.put('/:id/status', async (c) => {
           const members = typeof app.group_members === 'string' ? JSON.parse(app.group_members) : app.group_members;
           if (Array.isArray(members)) {
             for (const m of members) {
-              const memIdNum = m.student_id_num || m.student_id;
+              const memIdNum = String(m.student_id_num || m.student_id || '').trim();
               const memName = m.name || m.student_name;
-              if (memName && memIdNum) {
-                const memEmail = `${memIdNum.toLowerCase().replace(/[^a-z0-9]/g, '')}@stu.smiu.edu.pk`;
-                let memUser = await c.env.DB.prepare('SELECT id FROM users WHERE student_id_num = ? OR email = ?').bind(memIdNum, memEmail).first();
-                let memUserId = memUser ? (memUser.id as string) : generateId();
-                if (memUser) {
-                  await c.env.DB.prepare(
-                    `UPDATE users SET status = 'active', role = 'student', department = ?, student_id_num = ?, program = ?, shift = ?, password = ? WHERE id = ?`
-                  ).bind(app.department, memIdNum, app.program, app.shift, provisioned_password, memUserId).run();
-                } else {
-                  await c.env.DB.prepare(
-                    `INSERT INTO users (id, email, name, role, department, student_id_num, program, shift, status, password)
-                     VALUES (?, ?, ?, 'student', ?, ?, ?, ?, 'active', ?)`
-                  ).bind(memUserId, memEmail, memName, app.department, memIdNum, app.program, app.shift, provisioned_password).run();
-                }
+              if (!memName || !memIdNum) continue;
 
-                const memberExists = await c.env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(memUserId).first();
-                if (memberExists) {
-                  const inGroup = await c.env.DB.prepare('SELECT id FROM group_members WHERE group_id = ? AND user_id = ?').bind(groupId, memUserId).first();
-                  if (!inGroup) {
-                    await c.env.DB.prepare('INSERT INTO group_members (id, group_id, user_id) VALUES (?, ?, ?)').bind(generateId(), groupId, memUserId).run();
-                  }
-                }
+              const memEmail = resolveMemberEmail(m, memIdNum);
+              if (!memEmail) {
+                console.error(`Skipped group member ${memName}: no usable email address`);
+                continue;
+              }
+
+              // A Student ID may belong to only ONE user. Resolve strictly by
+              // Student ID — the previous `student_id_num = ? OR email = ?` lookup
+              // could match an unrelated account by email and then overwrite that
+              // account's program/shift/password, effectively hijacking it.
+              const sidOwner = await c.env.DB.prepare(
+                `SELECT id, name, email, status FROM users
+                 WHERE student_id_num IS NOT NULL AND TRIM(student_id_num) = ?`
+              ).bind(memIdNum).first() as Record<string, any> | null;
+
+              // The derived email may already be registered to a DIFFERENT person
+              // (different Student ID). Never attach this member to them.
+              const emailOwner = await c.env.DB.prepare(
+                'SELECT id, student_id_num FROM users WHERE LOWER(email) = ?'
+              ).bind(memEmail).first() as Record<string, any> | null;
+              if (emailOwner && String(emailOwner.student_id_num || '').trim() !== memIdNum) {
+                console.error(`Skipped group member ${memName}: email ${memEmail} belongs to another Student ID`);
+                continue;
+              }
+
+              let memUserId: string;
+              if (sidOwner) {
+                memUserId = sidOwner.id as string;
+                // Keep an existing password — only default it when none is set.
+                await c.env.DB.prepare(
+                  `UPDATE users SET status = 'active', role = 'student', department = ?,
+                     program = ?, shift = ?, password = COALESCE(password, ?)
+                   WHERE id = ?`
+                ).bind(app.department, app.program, app.shift, provisioned_password, memUserId).run();
+              } else {
+                memUserId = generateId();
+                await c.env.DB.prepare(
+                  `INSERT INTO users (id, email, name, role, department, student_id_num, program, shift, status, password)
+                   VALUES (?, ?, ?, 'student', ?, ?, ?, ?, 'active', ?)`
+                ).bind(memUserId, memEmail, memName, app.department, memIdNum, app.program, app.shift, provisioned_password).run();
+              }
+
+              const inGroup = await c.env.DB.prepare('SELECT id FROM group_members WHERE group_id = ? AND user_id = ?').bind(groupId, memUserId).first();
+              if (!inGroup) {
+                await c.env.DB.prepare('INSERT INTO group_members (id, group_id, user_id) VALUES (?, ?, ?)').bind(generateId(), groupId, memUserId).run();
               }
             }
           }
@@ -528,6 +770,89 @@ applicationRoutes.put('/:id/status', async (c) => {
         ref_id: projectId
       });
 
+      // 8. Email notifications on Approval via SMTP2GO
+      if (c.env.SMTP2GO_API_KEY) {
+        const appUrl = resolveAppUrl(c.req.url, c.env);
+
+        // (a) To Student Leader
+        const leaderEmailHtml = buildApplicationDecisionEmail({
+          recipientName: app.student_name,
+          groupName: app.group_name,
+          projectTitle: app.project_title,
+          status: 'approved',
+          role: 'leader',
+          remarks: admin_notes || app.admin_notes,
+          credentials: {
+            email: app.email,
+            password: provisioned_password,
+          },
+          actionUrl: appUrl,
+        });
+        sendEmail(c.env, {
+          to: app.email,
+          subject: `[FYPilot] Application Approved - Welcome to FYPilot!`,
+          html: leaderEmailHtml,
+        }).catch((e) => console.error('[Email] Error sending approval to leader:', e));
+
+        // (b) To Group Members
+        if (app.group_members) {
+          try {
+            const members = typeof app.group_members === 'string' ? JSON.parse(app.group_members) : app.group_members;
+            if (Array.isArray(members)) {
+              for (const m of members) {
+                const memName = m.name || m.student_name;
+                const memIdNum = String(m.student_id_num || m.student_id || '').trim();
+                const memEmail = resolveMemberEmail(m, memIdNum);
+
+                if (memName && memEmail) {
+                  const memberEmailHtml = buildApplicationDecisionEmail({
+                    recipientName: memName,
+                    groupName: app.group_name,
+                    projectTitle: app.project_title,
+                    status: 'approved',
+                    role: 'member',
+                    remarks: admin_notes || app.admin_notes,
+                    credentials: {
+                      email: memEmail,
+                      password: provisioned_password,
+                    },
+                    actionUrl: appUrl,
+                  });
+                  sendEmail(c.env, {
+                    to: memEmail,
+                    subject: `[FYPilot] FYP Group Approved - Welcome to FYPilot!`,
+                    html: memberEmailHtml,
+                  }).catch((e) => console.error(`[Email] Error sending approval to member ${memEmail}:`, e));
+                }
+              }
+            }
+          } catch (e) {
+            console.error('[Email] Error dispatching to members:', e);
+          }
+        }
+
+        // (c) To Assigned Supervisor
+        if (supervisorUserId) {
+          const supUser = await c.env.DB.prepare('SELECT name, email FROM users WHERE id = ?').bind(supervisorUserId).first() as { name?: string; email?: string } | null;
+          if (supUser?.email) {
+            const supEmailHtml = buildSupervisorAssignedEmail({
+              supervisorName: supUser.name || 'Faculty Supervisor',
+              groupName: app.group_name,
+              projectTitle: app.project_title,
+              studentLeaderName: app.student_name,
+              studentLeaderEmail: app.email,
+              department: app.department,
+              actionUrl: appUrl,
+            });
+            sendEmail(c.env, {
+              to: supUser.email,
+              subject: `[FYPilot] New FYP Group Assigned: ${app.group_name}`,
+              html: supEmailHtml,
+            }).catch((e) => console.error('[Email] Error sending to supervisor:', e));
+          }
+        }
+      }
+
       return c.json({
         success: true,
         message: 'Application approved! Student account, group, proposal, and project created successfully.'
@@ -544,6 +869,61 @@ applicationRoutes.put('/:id/status', async (c) => {
       details: `Student application status changed to ${status}`,
       metadata: { application_id: id, student_email: app.email, project_title: app.project_title, status }
     });
+
+    // Email notification on Rejection or Revision Request via SMTP2GO
+    if (c.env.SMTP2GO_API_KEY && app.email) {
+      const appUrl = resolveAppUrl(c.req.url, c.env);
+      const decisionSubject = `[FYPilot] Application Update: ${status === 'rejected' ? 'Application Rejected' : 'Revision Requested'}`;
+
+      // (a) To Student Leader
+      const decisionHtml = buildApplicationDecisionEmail({
+        recipientName: app.student_name,
+        groupName: app.group_name,
+        projectTitle: app.project_title,
+        status: status,
+        role: 'leader',
+        remarks: admin_notes || app.admin_notes,
+        actionUrl: appUrl,
+      });
+      sendEmail(c.env, {
+        to: app.email,
+        subject: decisionSubject,
+        html: decisionHtml,
+      }).catch((e) => console.error('[Email] Error sending decision email:', e));
+
+      // (b) To Group Members — they were added by the leader, so they need the
+      // outcome too rather than being left waiting indefinitely.
+      if (app.group_members) {
+        try {
+          const members = typeof app.group_members === 'string' ? JSON.parse(app.group_members) : app.group_members;
+          if (Array.isArray(members)) {
+            for (const m of members) {
+              const memName = m.name || m.student_name;
+              const memIdNum = String(m.student_id_num || m.student_id || '').trim();
+              const memEmail = resolveMemberEmail(m, memIdNum);
+              if (!memName || !memEmail) continue;
+
+              const memberDecisionHtml = buildApplicationDecisionEmail({
+                recipientName: memName,
+                groupName: app.group_name,
+                projectTitle: app.project_title,
+                status: status,
+                role: 'member',
+                remarks: admin_notes || app.admin_notes,
+                actionUrl: appUrl,
+              });
+              sendEmail(c.env, {
+                to: memEmail,
+                subject: decisionSubject,
+                html: memberDecisionHtml,
+              }).catch((e) => console.error(`[Email] Error sending decision email to member ${memEmail}:`, e));
+            }
+          }
+        } catch (e) {
+          console.error('[Email] Error dispatching decision to members:', e);
+        }
+      }
+    }
 
     return c.json({
       success: true,

@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Env } from '../ai/ai.types';
 import { generateId } from '../ai/ai.utils';
 import { resolveSessionRole } from '../../utils/session';
+import { sendEmail, resolveAppUrl, buildAuditLogExportAlertEmail } from '../../utils/email';
 
 const auditRoutes = new Hono<{ Bindings: Env }>();
 const AUDIT_ACCESS_ROLES = new Set(['hod', 'dean']);
@@ -109,6 +110,33 @@ auditRoutes.get('/logs/export', async (c) => {
   }
 
   const format = (c.req.query('format') || 'csv').toLowerCase();
+  const actorId = c.req.header('X-User-Id') || 'session-user';
+
+  // Log audit event for compliance
+  await logAuditEvent(c.env.DB, actorId, userRole, 'audit_logs_exported', {
+    entityType: 'system',
+    entityId: 'audit_logs',
+    details: `Audit logs exported in ${format.toUpperCase()} format by ${userRole}`,
+    metadata: { format, exported_at: new Date().toISOString() },
+  });
+
+  // Security Alert Email dispatch
+  if (c.env.SMTP2GO_API_KEY) {
+    const alertHtml = buildAuditLogExportAlertEmail({
+      exporterRole: userRole,
+      exporterId: actorId,
+      format,
+      timestamp: new Date().toUTCString(),
+      actionUrl: resolveAppUrl(c.req.url, c.env),
+    });
+    // Send to administrator / coordinator / HOD
+    sendEmail(c.env, {
+      to: 'admin@university.edu',
+      subject: `[FYPilot Security Alert] Audit Logs Downloaded (${format.toUpperCase()})`,
+      html: alertHtml,
+    }).catch((e) => console.error('[Email] Failed to send export alert:', e));
+  }
+
   const rows = await c.env.DB.prepare(
     `SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 500`
   ).all();

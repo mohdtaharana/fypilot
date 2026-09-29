@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import type { Env } from '../ai/ai.types';
 import { generateId } from '../ai/ai.utils';
-import { deleteGroupsCascade, deleteProjectsCascade } from '../../utils/cascade';
+import { deleteGroupsCascade, deleteProjectsCascade, deleteUsersCascade } from '../../utils/cascade';
+import { requireBulkDeleteRole } from '../../utils/bulk-guard';
 import {
   clearedSessionCookie,
   createSession,
@@ -17,11 +18,64 @@ const userRoutes = new Hono<{ Bindings: Env }>();
 const EXECUTIVE_ROLES = new Set(['coordinator', 'hod', 'dean']);
 const isExecutiveRole = (role?: string | null) => !!role && EXECUTIVE_ROLES.has(role);
 
+// DELETE /api/users/bulk — remove EVERY student account.
+// Supervisors and executive accounts are deliberately left untouched.
+// Registered before `/:id` so the literal path is matched first.
+userRoutes.delete('/bulk', async (c) => {
+  const actor = await requireBulkDeleteRole(c);
+  if (!actor) {
+    return c.json({ success: false, error: 'Only coordinators, HOD, Dean or admins can delete all students' }, 403);
+  }
+
+  const body = await c.req.json().catch(() => ({} as any));
+  if (body?.confirm !== 'DELETE ALL STUDENTS') {
+    return c.json({ success: false, error: 'Confirmation phrase did not match' }, 400);
+  }
+
+  try {
+    const rows = await c.env.DB.prepare(
+      "SELECT id FROM users WHERE role = 'student'"
+    ).all();
+    const students = (rows.results || []) as Array<Record<string, any>>;
+    if (students.length === 0) {
+      return c.json({ success: true, message: 'There are no student accounts to delete.', deleted: 0 });
+    }
+
+    await deleteUsersCascade(c.env.DB, students.map((s) => s.id));
+
+    await logAuditEvent(c.env.DB, actor.userId, actor.role, 'users_deleted_all', {
+      entityType: 'user',
+      entityId: '*',
+      details: `All ${students.length} student account(s) deleted`,
+      metadata: { scope: 'all_students', deleted_count: students.length, user_ids: students.map((s) => s.id) },
+    });
+
+    return c.json({
+      success: true,
+      message: `All ${students.length} student account(s) and their groups, proposals and projects were deleted.`,
+      deleted: students.length,
+    });
+  } catch (e: any) {
+    console.error('Delete all students error:', e);
+    return c.json({ success: false, error: 'Failed to delete all students: ' + (e?.message || 'unknown error') }, 500);
+  }
+});
+
+/**
+ * Executive accounts are self-healing: created on first boot if missing, and
+ * re-asserted afterwards.
+ *
+ * These are the project's testing credentials. The emails are the maintainer's
+ * personal addresses so a single inbox set can drive every role during demos;
+ * the shared password is fixed and unhashed. Replace both with real
+ * institutional accounts and a hashed password before this is exposed to
+ * anyone outside the team.
+ */
 async function ensureExecutiveAccounts(db: Env['DB']) {
   const required = [
-    { id: 'coord-1', email: 'admin@university.edu', name: 'Dr. Admin Coordinator', role: 'coordinator' },
-    { id: 'hod-1', email: 'hod@university.edu', name: 'Dr. HOD', role: 'hod' },
-    { id: 'dean-1', email: 'dean@university.edu', name: 'Dr. Dean', role: 'dean' },
+    { id: 'coord-1', email: 'rtmea85@gmail.com', name: 'Dr. Admin Coordinator', role: 'coordinator' },
+    { id: 'hod-1', email: 'rtmea84@gmail.com', name: 'Dr. HOD', role: 'hod' },
+    { id: 'dean-1', email: 'dev.ranataha@gmail.com', name: 'Dr. Dean', role: 'dean' },
   ];
 
   for (const user of required) {
@@ -35,6 +89,8 @@ async function ensureExecutiveAccounts(db: Env['DB']) {
          VALUES (?, ?, ?, ?, ?, 'active', 'TahaRana@123')`
       ).bind(user.id, user.email, user.name, user.role, 'Computer Science').run();
     } else {
+      // Matched by id, so the email is carried over: re-assert the role and
+      // status without reverting a deliberately changed login address.
       await db.prepare(
         `UPDATE users SET name = ?, role = ?, department = COALESCE(department, 'Computer Science'), status = COALESCE(status, 'active'), password = COALESCE(password, 'TahaRana@123') WHERE id = ? OR LOWER(email) = LOWER(?)`
       ).bind(user.name, user.role, user.id, user.email).run();
@@ -338,6 +394,34 @@ userRoutes.put('/:id', async (c) => {
     values.push(body.name.trim());
   }
 
+  // Student ID must stay unique — changing it must not collide with another user.
+  if (body.student_id_num !== undefined) {
+    const sid = String(body.student_id_num ?? '').trim();
+    if (sid && !/^[A-Za-z0-9\-\/]{2,32}$/.test(sid)) {
+      return c.json({ success: false, error: 'Student ID may only contain letters, numbers, dash and slash (2-32 characters)' }, 400);
+    }
+    const currentSidRow = await c.env.DB.prepare('SELECT student_id_num FROM users WHERE id = ?').bind(id).first() as Record<string, any> | null;
+    const currentSid = String(currentSidRow?.student_id_num || '').trim();
+    if (sid !== currentSid) {
+      if (sid) {
+        const taken = await c.env.DB.prepare(
+          `SELECT id, name, status FROM users
+           WHERE student_id_num IS NOT NULL AND TRIM(student_id_num) = ? AND id != ?`
+        ).bind(sid, id).first() as Record<string, any> | null;
+        if (taken) {
+          return c.json({
+            success: false,
+            error: 'This Student ID is already registered to another user.',
+            existing_user_id: taken.id,
+            existing_name: taken.name
+          }, 409);
+        }
+      }
+      fields.push('student_id_num = ?');
+      values.push(sid || null);
+    }
+  }
+
   if (body.password !== undefined) {
     if (!body.password || body.password.length < 6) {
       return c.json({ success: false, error: 'Password must be at least 6 characters' }, 400);
@@ -351,7 +435,15 @@ userRoutes.put('/:id', async (c) => {
   fields.push("updated_at = datetime('now')");
   values.push(id);
 
-  await c.env.DB.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).bind(...values).run();
+  try {
+    await c.env.DB.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).bind(...values).run();
+  } catch (e) {
+    const msg = String((e as Error)?.message || e);
+    if (/UNIQUE constraint failed/i.test(msg)) {
+      return c.json({ success: false, error: 'Email or Student ID is already registered.' }, 409);
+    }
+    throw e;
+  }
 
   const user = await c.env.DB.prepare(
     'SELECT id, email, name, role, department, student_id_num, program, shift, status, avatar FROM users WHERE id = ?'
@@ -445,18 +537,79 @@ userRoutes.get('/:id/student-profile', async (c) => {
 // POST /api/users (coordinator adds directly — status = active immediately)
 userRoutes.post('/', async (c) => {
   const body = await c.req.json();
+
+  const email = String(body.email || '').trim().toLowerCase();
+  if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
+    return c.json({ success: false, error: 'A valid email address is required' }, 400);
+  }
+
+  const studentIdNum = body.student_id_num !== undefined && body.student_id_num !== null
+    ? String(body.student_id_num).trim()
+    : '';
+  if (studentIdNum && !/^[A-Za-z0-9\-\/]{2,32}$/.test(studentIdNum)) {
+    return c.json({ success: false, error: 'Student ID may only contain letters, numbers, dash and slash (2-32 characters)' }, 400);
+  }
+
+  // Email must be unique (case-insensitive) across ALL users, not just active ones.
+  const emailTaken = await c.env.DB.prepare(
+    'SELECT id, status FROM users WHERE LOWER(email) = ?'
+  ).bind(email).first() as Record<string, any> | null;
+  if (emailTaken) {
+    return c.json({
+      success: false,
+      error: emailTaken.status === 'pending'
+        ? 'This email already has a pending registration request.'
+        : 'An account with this email already exists.',
+      existing_status: emailTaken.status
+    }, 409);
+  }
+
+  // Student ID must be unique — one student ID can only ever belong to one user.
+  if (studentIdNum) {
+    const idTaken = await c.env.DB.prepare(
+      `SELECT id, email, name, status FROM users
+       WHERE student_id_num IS NOT NULL AND TRIM(student_id_num) = ?`
+    ).bind(studentIdNum).first() as Record<string, any> | null;
+    if (idTaken) {
+      await logAuditEvent(c.env.DB, c.req.header('X-User-Id') || 'system', c.req.header('X-User-Role') || 'system', 'duplicate_student_id_blocked', {
+        entityType: 'user',
+        entityId: String(idTaken.id),
+        details: `Blocked registration for duplicate Student ID ${studentIdNum}`,
+        metadata: { attempted_student_id_num: studentIdNum, attempted_email: email, existing_user_id: idTaken.id, existing_status: idTaken.status }
+      });
+      return c.json({
+        success: false,
+        error: 'This Student ID is already registered to another user.',
+        existing_user_id: idTaken.id,
+        existing_name: idTaken.name,
+        existing_status: idTaken.status
+      }, 409);
+    }
+  }
+
   const id = generateId();
 
-  await c.env.DB.prepare(
-    `INSERT INTO users (id, email, name, role, department, expertise, research_areas, max_students, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')`
-  ).bind(
-    id, body.email, body.name, body.role || 'student',
-    body.department || null,
-    body.expertise ? JSON.stringify(body.expertise) : null,
-    body.research_areas ? JSON.stringify(body.research_areas) : null,
-    body.max_students || 8
-  ).run();
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO users (id, email, name, role, department, student_id_num, expertise, research_areas, max_students, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`
+    ).bind(
+      id, email, body.name, body.role || 'student',
+      body.department || null,
+      studentIdNum || null,
+      body.expertise ? JSON.stringify(body.expertise) : null,
+      body.research_areas ? JSON.stringify(body.research_areas) : null,
+      body.max_students || 8
+    ).run();
+  } catch (e) {
+    // Last-resort guard: the DB unique indexes (0017) reject duplicates even if
+    // two requests race past the checks above.
+    const msg = String((e as Error)?.message || e);
+    if (/UNIQUE constraint failed/i.test(msg)) {
+      return c.json({ success: false, error: 'Email or Student ID is already registered.' }, 409);
+    }
+    throw e;
+  }
 
   const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first();
   await logAuditEvent(c.env.DB, c.req.header('X-User-Id') || 'system', c.req.header('X-User-Role') || 'system', 'user_created', {

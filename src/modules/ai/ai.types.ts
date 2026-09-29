@@ -4,6 +4,14 @@ export interface Env {
   DB: D1Database;
   OPENROUTER_API_KEY: string;
   OPENROUTER_MODEL: string;
+  /** SMTP2GO REST API key — used to send transactional email. */
+  SMTP2GO_API_KEY?: string;
+  /** Verified sender address used as the From address on outgoing email. */
+  EMAIL_FROM?: string;
+  /** Alias for EMAIL_FROM, accepted for convenience. */
+  SENDER_EMAIL?: string;
+  /** Public base URL of the deployment, used for links inside emails. */
+  APP_BASE_URL?: string;
 }
 
 // AI Service Types

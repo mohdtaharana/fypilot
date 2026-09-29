@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import type { MiddlewareHandler } from 'hono';
 import { cors } from 'hono/cors';
 import { serveStatic } from 'hono/cloudflare-workers';
 import { aiRoutes } from './modules/ai/ai.routes';
@@ -12,9 +13,21 @@ import { notificationRoutes } from './modules/notifications/notification.routes'
 import { applicationRoutes } from './modules/applications/application.routes';
 import { defenseRoutes } from './modules/defense/defense.routes';
 import { auditRoutes } from './modules/audit/audit.routes';
+import { evaluationRoutes } from './modules/evaluations/evaluation.routes';
 import type { Env } from './modules/ai/ai.types';
 
 const app = new Hono<{ Bindings: Env }>();
+
+// Error boundary: the Vite/wrangler dev server runs this app in-process, so a
+// thrown handler error (e.g. a malformed D1 query while loading /evaluate/:token)
+// must never escape as an unhandled rejection. Convert it to a normal Response.
+app.onError((err, c) => {
+  console.error(`[request error] ${c.req.method} ${c.req.path}:`, err);
+  if (c.req.path.startsWith('/api/')) {
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+  return c.text('Internal server error', 500);
+});
 
 // CORS
 app.use('/api/*', cors());
@@ -32,19 +45,64 @@ app.route('/api/presence', presenceRoutes);
 app.route('/api/notifications', notificationRoutes);
 app.route('/api/defense', defenseRoutes);
 app.route('/api/audit', auditRoutes);
+app.route('/api/evaluations', evaluationRoutes);
 
 // Health check
 app.get('/api/health', (c) => {
   return c.json({ status: 'ok', timestamp: new Date().toISOString(), version: '1.0.0' });
 });
 
-// Serve static assets before the SPA catch-all
-app.use('/static/*', serveStatic({ root: './public' }));
+// Unknown API routes must return JSON, never the SPA shell. Registered after
+// every real API route but before the static/SPA handlers.
+app.all('/api/*', (c) => {
+  return c.json({ success: false, error: 'Not found' }, 404);
+});
 
-// Serve the SPA frontend
+// Serve static assets before the SPA catch-all. `hono/cloudflare-workers`
+// serveStatic depends on the legacy Workers Sites manifest, which is absent
+// under the Vite dev server and `wrangler pages dev`; degrade to the next
+// handler instead of throwing so a missing file never 500s the app.
+const staticAsset = (prefix: string): MiddlewareHandler<{ Bindings: Env }> => {
+  const handler = serveStatic({ root: './public' });
+  return async (c, next) => {
+    try {
+      await handler(c, next);
+    } catch (err) {
+      console.error(`[static] lookup failed for ${prefix}:`, err);
+      await next();
+    }
+  };
+};
+
+app.use('/static/*', staticAsset('/static/*'));
+app.use('/images/*', staticAsset('/images/*'));
+app.use('/icons/*', staticAsset('/icons/*'));
+app.use('/manifest.webmanifest', staticAsset('/manifest.webmanifest'));
+app.use('/sw.js', staticAsset('/sw.js'));
+app.use('/favicon.ico', staticAsset('/favicon.ico'));
+
+// SPA fallback: every remaining GET request returns the app shell so that
+// client-side routes such as /evaluate/:token and /apply survive a hard refresh.
+// Must be the last route on the stack.
 app.get('*', (c) => {
   return c.html(getIndexHTML());
 });
+
+// Keep the Node dev server alive if a background promise rejects or a stray
+// exception slips past the routes. Guarded so it is a no-op on Cloudflare.
+type NodeProcessLike = {
+  on(event: 'unhandledRejection', cb: (reason: unknown) => void): void;
+  on(event: 'uncaughtException', cb: (err: unknown) => void): void;
+};
+const nodeProcess = (globalThis as { process?: NodeProcessLike }).process;
+if (nodeProcess && typeof nodeProcess.on === 'function') {
+  nodeProcess.on('unhandledRejection', (reason) => {
+    console.error('[unhandledRejection]', reason);
+  });
+  nodeProcess.on('uncaughtException', (err) => {
+    console.error('[uncaughtException]', err);
+  });
+}
 
 function getIndexHTML(): string {
   return `<!DOCTYPE html>
@@ -64,6 +122,10 @@ function getIndexHTML(): string {
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Renders the external examiner evaluation QR code. Served from our own
+       origin (bundled from the qrcode npm package) so the panel still works
+       offline and on exam day without a CDN. -->
+  <script src="/static/vendor/qrcode.min.js?v=20260929-1" data-qr-lib="1" defer></script>
   <script>
     tailwind.config = {
       theme: {
@@ -80,7 +142,7 @@ function getIndexHTML(): string {
 <body class="bg-gray-50 min-h-screen">
   <div id="app"></div>
   <div id="toast-container" class="fixed bottom-4 right-4 z-[99999] pointer-events-none"></div>
-  <script src="/static/app.js?v=20260927-1"></script>
+  <script src="/static/app.js?v=20260929-qrpanel"></script>
 </body>
 </html>`;
 }

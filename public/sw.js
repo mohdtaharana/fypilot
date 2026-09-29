@@ -1,4 +1,4 @@
-const CACHE = 'fypilot-v2';
+const CACHE = 'fypilot-v5';
 const STATIC = [
   '/',
   '/manifest.webmanifest',
@@ -6,7 +6,8 @@ const STATIC = [
   '/icons/icon-512.png',
   '/images/fypilotlogo.png',
   '/images/fypilot-logo.png',
-  '/static/app.js?v=20260927-1',
+  '/static/vendor/qrcode.min.js?v=20260929-1',
+  '/static/app.js?v=20260929-qrpanel',
   '/static/style.css?v=20260927-1'
 ];
 

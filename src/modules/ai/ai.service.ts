@@ -11,17 +11,73 @@ import { PROJECT_SUMMARY_PROMPT, PROJECT_SUMMARY_VERSION } from './prompts/proje
 import { FEEDBACK_ASSISTANT_PROMPT, FEEDBACK_ASSISTANT_VERSION } from './prompts/feedbackAssistant.prompt';
 import { PROJECT_ASSISTANT_PROMPT, PROJECT_ASSISTANT_VERSION } from './prompts/projectAssistant.prompt';
 
+/**
+ * Default primary model.
+ *
+ * Chosen because it sits on its own upstream pool and answered reliably during
+ * testing, whereas the popular free models (gemma-4-*, qwen3.8-27b, poolside)
+ * were returning 429 "temporarily rate-limited upstream" almost every call and
+ * made every request pay a failed round trip before reaching a working model.
+ *
+ * The older qwen/qwen-2.5-*-instruct:free and meta-llama/llama-3.3-70b-instruct:free
+ * slugs are gone: they now 404 with "this model is unavailable for free, use the
+ * paid version instead".
+ */
+export const DEFAULT_MODEL = 'nvidia/nemotron-3-super-120b-a12b:free';
+
+/**
+ * Tried in order when a model cannot serve the request. All are free tier, so
+ * this only ever trades quality for availability - never for paid use.
+ *
+ * The free tier draws on shared upstream pools, so popular models return 429 at
+ * unpredictable times. Verified against the live API; availability changes
+ * minute to minute, which is the entire reason several are listed. Qwen stays in
+ * the chain because the user prefers it and it recovers once its pool frees up.
+ * nemotron-3.5-content-safety is deliberately excluded as a classifier rather
+ * than a chat model.
+ */
+export const FALLBACK_MODELS = [
+  'nvidia/nemotron-3-ultra-550b-a55b:free',
+  'qwen/qwen3.8-27b:free',
+  'cohere/north-mini-code:free',
+  'inclusionai/ling-3.0-flash-sante:free',
+  'dots-studio/dots-3-note-preview:free',
+  'google/gemma-4-26b-a4b-it:free',
+  'liquid/lfm-2.5-2.6b:free',
+] as const;
+
+/**
+ * Statuses where a different model is likely to succeed. 429 is the free-tier
+ * rate limit this fallback exists for; 402 covers a model that has run out of
+ * its allowance, 404 a free model withdrawn from OpenRouter, and 503/529 a
+ * provider-side outage. 400/401/403 are deliberately excluded: a malformed
+ * prompt, a bad key or a permission problem will fail identically on every
+ * model, so rotating would just burn the whole chain before falling back.
+ */
+const ROTATE_ON_STATUS = new Set([402, 404, 429, 503, 529]);
+
 export class AIService {
   private env: Env;
+  /** Model that produced the most recent result. Starts as the primary. */
   private model: string;
+  /** The configured primary, kept for "did we have to fall back?" checks. */
+  private primaryModel: string;
+  private models: string[];
 
   constructor(env: Env) {
     this.env = env;
-    this.model = (env.OPENROUTER_MODEL || 'google/gemma-4-26b-a4b-it:free').trim();
+    const primary = (env.OPENROUTER_MODEL || DEFAULT_MODEL).trim();
+    this.primaryModel = primary;
+    this.model = primary;
+    this.models = [primary, ...FALLBACK_MODELS.filter((m) => m !== primary)];
   }
 
   /**
-   * Core method: Call OpenRouter API
+   * Core method: Call OpenRouter API.
+   *
+   * Walks the model chain. A model that reports a rotatable status is skipped
+   * for the rest of the request, and each remaining model still gets its own
+   * retries so a transient blip is not mistaken for a dead model.
    */
   private async callAI(prompt: string, systemPrompt?: string, retries = 2): Promise<string | null> {
     const apiKey = (this.env.OPENROUTER_API_KEY || '').trim();
@@ -30,62 +86,84 @@ export class AIService {
       return null;
     }
 
-    for (let attempt = 0; attempt <= retries; attempt++) {
-      try {
-        const messages: Array<{ role: string; content: string }> = [];
-        if (systemPrompt) {
-          messages.push({ role: 'system', content: systemPrompt });
-        }
-        messages.push({ role: 'user', content: prompt });
+    let lastError = '';
 
-        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://fypilot.pages.dev',
-            'X-Title': 'FYPilot FYP Platform',
-          },
-          body: JSON.stringify({
-            model: this.model,
-            messages,
-            temperature: 0.3,
-            max_tokens: 2048,
-          }),
-        });
+    for (let modelIndex = 0; modelIndex < this.models.length; modelIndex++) {
+      const model = this.models[modelIndex];
 
-        if (!response.ok) {
-          const errorBody = await response.text();
-          console.error(`AI API Error (attempt ${attempt + 1}):`, response.status, errorBody);
-          if (attempt === retries) return null;
-          await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
-          continue;
-        }
-
-        const data = await response.json() as any;
-        let content = data.choices?.[0]?.message?.content || null;
-
-        // Extract JSON from markdown code blocks if model wraps it
-        if (content) {
-          const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
-          if (jsonMatch) content = jsonMatch[1].trim();
-          // Also handle bare JSON starting with { or [
-          const bareMatch = content.match(/^\s*[\[{][\s\S]*[\]}]\s*$/);
-          if (!bareMatch) {
-            // Try extracting JSON substring
-            const start = content.indexOf('{');
-            const end = content.lastIndexOf('}');
-            if (start !== -1 && end > start) content = content.substring(start, end + 1);
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+          const messages: Array<{ role: string; content: string }> = [];
+          if (systemPrompt) {
+            messages.push({ role: 'system', content: systemPrompt });
           }
-        }
+          messages.push({ role: 'user', content: prompt });
 
-        return content;
-      } catch (error) {
-        console.error(`AI call failed (attempt ${attempt + 1}):`, error);
-        if (attempt === retries) return null;
-        await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+          const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${apiKey}`,
+              'Content-Type': 'application/json',
+              'HTTP-Referer': 'https://fypilot.pages.dev',
+              'X-Title': 'FYPilot FYP Platform',
+            },
+            body: JSON.stringify({
+              model,
+              messages,
+              temperature: 0.3,
+              max_tokens: 2048,
+            }),
+          });
+
+          if (!response.ok) {
+            const errorBody = await response.text();
+            lastError = `${model} -> ${response.status} ${errorBody.slice(0, 300)}`;
+            console.error(`AI API Error (attempt ${attempt + 1}):`, response.status, model, errorBody.slice(0, 300));
+
+            if (ROTATE_ON_STATUS.has(response.status)) {
+              // No point retrying a model that is rate limited or gone.
+              console.warn(`[AI Service] Rotating off ${model} after ${response.status}.`);
+              break;
+            }
+            if (attempt === retries) break;
+            await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+            continue;
+          }
+
+          const data = await response.json() as any;
+          let content = data.choices?.[0]?.message?.content || null;
+
+          // Extract JSON from markdown code blocks if model wraps it
+          if (content) {
+            const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+            if (jsonMatch) content = jsonMatch[1].trim();
+            // Also handle bare JSON starting with { or [
+            const bareMatch = content.match(/^\s*[\[{][\s\S]*[\]}]\s*$/);
+            if (!bareMatch) {
+              // Try extracting JSON substring
+              const start = content.indexOf('{');
+              const end = content.lastIndexOf('}');
+              if (start !== -1 && end > start) content = content.substring(start, end + 1);
+            }
+          }
+
+          if (model !== this.primaryModel) {
+            console.warn(`[AI Service] Served by fallback model ${model} (${this.primaryModel} unavailable).`);
+          }
+          // Record what actually answered so the audit trail, the cache and the
+          // API response all name the model that produced this result.
+          this.model = model;
+          return content;
+        } catch (error) {
+          lastError = `${model} -> ${error}`;
+          console.error(`AI call failed (attempt ${attempt + 1}):`, model, error);
+          if (attempt === retries) break;
+          await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+        }
       }
     }
+
+    console.error('[AI Service] All models exhausted:', lastError);
     return null;
   }
 

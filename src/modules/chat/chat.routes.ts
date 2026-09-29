@@ -33,11 +33,19 @@ type ChatUser = {
 // Returns the DB-verified user record, or null if invalid/inactive.
 async function resolveIdentity(db: D1Database, userId: string): Promise<ChatUser | null> {
   if (!userId || userId === 'guest') return null;
-  const user = await db.prepare(
-    `SELECT id, email, name, role, department, avatar FROM users
-     WHERE id = ? AND (status = 'active' OR status IS NULL)`
-  ).bind(userId).first() as ChatUser | null;
-  return user || null;
+  try {
+    const user = await db.prepare(
+      `SELECT id, email, name, role, department, avatar FROM users
+       WHERE id = ? AND (status = 'active' OR status IS NULL)`
+    ).bind(userId).first() as ChatUser | null;
+    return user || null;
+  } catch (e) {
+    // Chat is polled constantly, so a transient D1 failure here would otherwise
+    // crash every in-flight request instead of failing one. Treat it as unknown
+    // identity and let the caller answer with a clean 401/503.
+    console.error('resolveIdentity query failed:', e);
+    return null;
+  }
 }
 
 // Role-based chat permission rules
@@ -143,22 +151,28 @@ chatRoutes.get('/', async (c) => {
   if (!me) return c.json({ success: false, error: 'Not authenticated' }, 401);
   const userId = me.id;
 
-  const result = await c.env.DB.prepare(
-    `SELECT c.id as chat_id,
-            CASE WHEN c.user_a = ? THEN c.user_b ELSE c.user_a END as peer_id,
-            u.name as peer_name, u.role as peer_role, u.avatar as peer_avatar,
-            u.department as peer_department,
-            (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id AND m.sender_id != ? AND m.read_at IS NULL) as unread,
-            (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id AND m.is_pinned = 1) as pinned_count,
-            (SELECT m.content FROM messages m WHERE m.chat_id = c.id ORDER BY m.seq DESC LIMIT 1) as last_content,
-            (SELECT m.type FROM messages m WHERE m.chat_id = c.id ORDER BY m.seq DESC LIMIT 1) as last_type,
-            (SELECT m.sender_id FROM messages m WHERE m.chat_id = c.id ORDER BY m.seq DESC LIMIT 1) as last_sender,
-            (SELECT m.created_at FROM messages m WHERE m.chat_id = c.id ORDER BY m.seq DESC LIMIT 1) as last_at
-     FROM chats c
-     JOIN users u ON u.id = (CASE WHEN c.user_a = ? THEN c.user_b ELSE c.user_a END)
-     WHERE c.user_a = ? OR c.user_b = ?
-     ORDER BY COALESCE(last_at, c.updated_at, c.created_at) DESC`
-  ).bind(userId, userId, userId, userId, userId).all();
+  let result: { results: unknown[] };
+  try {
+    result = await c.env.DB.prepare(
+      `SELECT c.id as chat_id,
+              CASE WHEN c.user_a = ? THEN c.user_b ELSE c.user_a END as peer_id,
+              u.name as peer_name, u.role as peer_role, u.avatar as peer_avatar,
+              u.department as peer_department,
+              (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id AND m.sender_id != ? AND m.read_at IS NULL) as unread,
+              (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id AND m.is_pinned = 1) as pinned_count,
+              (SELECT m.content FROM messages m WHERE m.chat_id = c.id ORDER BY m.seq DESC LIMIT 1) as last_content,
+              (SELECT m.type FROM messages m WHERE m.chat_id = c.id ORDER BY m.seq DESC LIMIT 1) as last_type,
+              (SELECT m.sender_id FROM messages m WHERE m.chat_id = c.id ORDER BY m.seq DESC LIMIT 1) as last_sender,
+              (SELECT m.created_at FROM messages m WHERE m.chat_id = c.id ORDER BY m.seq DESC LIMIT 1) as last_at
+       FROM chats c
+       JOIN users u ON u.id = (CASE WHEN c.user_a = ? THEN c.user_b ELSE c.user_a END)
+       WHERE c.user_a = ? OR c.user_b = ?
+       ORDER BY COALESCE(last_at, c.updated_at, c.created_at) DESC`
+    ).bind(userId, userId, userId, userId, userId).all();
+  } catch (e) {
+    console.error('chat list query failed:', e);
+    return c.json({ success: false, error: 'Chat service is temporarily unavailable' }, 503);
+  }
 
   const chats = (result.results as any[]).map((row) => ({
     id: row.chat_id,
@@ -182,12 +196,23 @@ chatRoutes.get('/', async (c) => {
       : null,
   }));
 
-  const nowIso = new Date().toISOString();
-  for (const chat of chats) {
-    const pr = await c.env.DB.prepare('SELECT * FROM presence WHERE user_id = ?').bind(chat.peer.id).first();
-    const p = serializePresence(pr as any, null, nowIso);
-    (chat as any).peer.online = p.online;
-    (chat as any).peer.last_seen = p.last_seen;
+  // Presence for every peer in one round-trip. Doing this per chat (N+1) was
+  // hammering the local D1 on every 6s poll.
+  const peerIds = chats.map((chat) => chat.peer.id);
+  if (peerIds.length) {
+    const placeholders = peerIds.map(() => '?').join(',');
+    const presence = await c.env.DB.prepare(
+      `SELECT user_id, last_active_at FROM presence WHERE user_id IN (${placeholders})`
+    ).bind(...peerIds).all();
+    const byUser = new Map(
+      ((presence.results as any[]) || []).map((row) => [row.user_id, row])
+    );
+    const nowIso = new Date().toISOString();
+    for (const chat of chats) {
+      const p = serializePresence(byUser.get(chat.peer.id), null, nowIso);
+      (chat as any).peer.online = p.online;
+      (chat as any).peer.last_seen = p.last_seen;
+    }
   }
 
   await touchPresence(c.env.DB, userId);
@@ -262,39 +287,46 @@ presenceRoutes.post('/', async (c) => {
   const recordingChatId = typeof body.recording_chat_id === 'string' && body.recording_chat_id ? body.recording_chat_id : null;
   const now = new Date().toISOString();
 
-  if (typingChatId && !recordingChatId) {
-    await c.env.DB.prepare(
-      `INSERT INTO presence (user_id, last_active_at, typing_chat_id, typing_at, recording_chat_id, recording_at)
-       VALUES (?, ?, ?, ?, NULL, NULL)
-       ON CONFLICT(user_id) DO UPDATE SET
-         last_active_at = excluded.last_active_at,
-         typing_chat_id = excluded.typing_chat_id,
-         typing_at = excluded.typing_at,
-         recording_chat_id = NULL,
-         recording_at = NULL`
-    ).bind(userId, now, typingChatId, now).run();
-  } else if (recordingChatId) {
-    await c.env.DB.prepare(
-      `INSERT INTO presence (user_id, last_active_at, typing_chat_id, typing_at, recording_chat_id, recording_at)
-       VALUES (?, ?, NULL, NULL, ?, ?)
-       ON CONFLICT(user_id) DO UPDATE SET
-         last_active_at = excluded.last_active_at,
-         typing_chat_id = NULL,
-         typing_at = NULL,
-         recording_chat_id = excluded.recording_chat_id,
-         recording_at = excluded.recording_at`
-    ).bind(userId, now, recordingChatId, now).run();
-  } else {
-    await c.env.DB.prepare(
-      `INSERT INTO presence (user_id, last_active_at, typing_chat_id, typing_at, recording_chat_id, recording_at)
-       VALUES (?, ?, NULL, NULL, NULL, NULL)
-       ON CONFLICT(user_id) DO UPDATE SET
-         last_active_at = excluded.last_active_at,
-         typing_chat_id = NULL,
-         typing_at = NULL,
-         recording_chat_id = NULL,
-         recording_at = NULL`
-    ).bind(userId, now).run();
+  // The heartbeat is fire-and-forget from the client; a DB hiccup must return a
+  // clean error rather than throwing an unhandled rejection on every poll.
+  try {
+    if (typingChatId && !recordingChatId) {
+      await c.env.DB.prepare(
+        `INSERT INTO presence (user_id, last_active_at, typing_chat_id, typing_at, recording_chat_id, recording_at)
+         VALUES (?, ?, ?, ?, NULL, NULL)
+         ON CONFLICT(user_id) DO UPDATE SET
+           last_active_at = excluded.last_active_at,
+           typing_chat_id = excluded.typing_chat_id,
+           typing_at = excluded.typing_at,
+           recording_chat_id = NULL,
+           recording_at = NULL`
+      ).bind(userId, now, typingChatId, now).run();
+    } else if (recordingChatId) {
+      await c.env.DB.prepare(
+        `INSERT INTO presence (user_id, last_active_at, typing_chat_id, typing_at, recording_chat_id, recording_at)
+         VALUES (?, ?, NULL, NULL, ?, ?)
+         ON CONFLICT(user_id) DO UPDATE SET
+           last_active_at = excluded.last_active_at,
+           typing_chat_id = NULL,
+           typing_at = NULL,
+           recording_chat_id = excluded.recording_chat_id,
+           recording_at = excluded.recording_at`
+      ).bind(userId, now, recordingChatId, now).run();
+    } else {
+      await c.env.DB.prepare(
+        `INSERT INTO presence (user_id, last_active_at, typing_chat_id, typing_at, recording_chat_id, recording_at)
+         VALUES (?, ?, NULL, NULL, NULL, NULL)
+         ON CONFLICT(user_id) DO UPDATE SET
+           last_active_at = excluded.last_active_at,
+           typing_chat_id = NULL,
+           typing_at = NULL,
+           recording_chat_id = NULL,
+           recording_at = NULL`
+      ).bind(userId, now).run();
+    }
+  } catch (e) {
+    console.error('presence heartbeat failed:', e);
+    return c.json({ success: false, error: 'Presence service is temporarily unavailable' }, 503);
   }
 
   return c.json({ success: true });
@@ -318,20 +350,25 @@ chatRoutes.get('/:id/messages', async (c) => {
   const limit = Math.min(parseInt(c.req.query('limit') || '60', 10), 200);
 
   let rows: any[];
-  if (!isNaN(after) && after > 0) {
-    const res = await c.env.DB.prepare(
-      `${MESSAGE_SELECT} WHERE m.chat_id = ? AND m.seq > ? ORDER BY m.seq ASC`
-    ).bind(chatId, after).all();
-    rows = res.results as any[];
-  } else {
-    const last = await c.env.DB.prepare(
-      'SELECT MAX(seq) as max_seq FROM messages WHERE chat_id = ?'
-    ).bind(chatId).first() as { max_seq: number | null } | null;
-    const maxSeq = last?.max_seq ?? 0;
-    const res = await c.env.DB.prepare(
-      `${MESSAGE_SELECT} WHERE m.chat_id = ? AND m.seq <= ? ORDER BY m.seq DESC LIMIT ?`
-    ).bind(chatId, maxSeq, limit).all();
-    rows = (res.results as any[]).reverse();
+  try {
+    if (!isNaN(after) && after > 0) {
+      const res = await c.env.DB.prepare(
+        `${MESSAGE_SELECT} WHERE m.chat_id = ? AND m.seq > ? ORDER BY m.seq ASC`
+      ).bind(chatId, after).all();
+      rows = res.results as any[];
+    } else {
+      const last = await c.env.DB.prepare(
+        'SELECT MAX(seq) as max_seq FROM messages WHERE chat_id = ?'
+      ).bind(chatId).first() as { max_seq: number | null } | null;
+      const maxSeq = last?.max_seq ?? 0;
+      const res = await c.env.DB.prepare(
+        `${MESSAGE_SELECT} WHERE m.chat_id = ? AND m.seq <= ? ORDER BY m.seq DESC LIMIT ?`
+      ).bind(chatId, maxSeq, limit).all();
+      rows = (res.results as any[]).reverse();
+    }
+  } catch (e) {
+    console.error('message fetch failed:', e);
+    return c.json({ success: false, error: 'Messages are temporarily unavailable' }, 503);
   }
 
   // Mark peer messages as read when the chat is actually open

@@ -1,7 +1,8 @@
-// FYPilot Notifications Module
 import { Hono } from 'hono';
 import type { Env } from '../ai/ai.types';
 import { generateId } from '../ai/ai.utils';
+import { sendEmail, resolveAppUrl, buildNotificationEmail } from '../../utils/email';
+import { resolveSessionRole } from '../../utils/session';
 
 const notificationRoutes = new Hono<{ Bindings: Env }>();
 
@@ -45,6 +46,43 @@ export async function notifyRole(db: D1Database, role: string, payload: Notifica
     }
   } catch (e) {
     // ignore
+  }
+}
+
+/**
+ * Create a notification in database AND send an email alert via SMTP2GO (non-blocking).
+ */
+export async function createNotificationWithEmail(
+  env: Env,
+  userId: string | null | undefined,
+  payload: NotificationPayload,
+  actionUrl?: string
+): Promise<void> {
+  if (!userId || !payload.title) return;
+  await createNotification(env.DB, userId, payload);
+
+  if (env.SMTP2GO_API_KEY) {
+    try {
+      const user = await env.DB.prepare(
+        'SELECT name, email FROM users WHERE id = ?'
+      ).bind(userId).first() as { name?: string; email?: string } | null;
+
+      if (user?.email) {
+        const html = buildNotificationEmail({
+          title: payload.title,
+          body: payload.body || payload.title,
+          recipientName: user.name,
+          actionUrl,
+        });
+        await sendEmail(env, {
+          to: user.email,
+          subject: `[FYPilot] ${payload.title}`,
+          html,
+        });
+      }
+    } catch (e) {
+      console.error('[Notification] Failed to send email alert:', e);
+    }
   }
 }
 
@@ -115,6 +153,50 @@ notificationRoutes.post('/read-all', async (c) => {
   }
 
   return c.json({ success: true });
+});
+
+// POST /api/notifications/test-email — Test sending an email via SMTP2GO
+notificationRoutes.post('/test-email', async (c) => {
+  // Restricted to executive roles: without a guard this endpoint lets anyone
+  // send email to any address through the SMTP2GO account.
+  const session = await resolveSessionRole(c.env.DB, c.req.header('Cookie'));
+  if (!session || !['coordinator', 'hod', 'dean', 'admin'].includes(session.role)) {
+    return c.json({ success: false, error: 'Not authorized' }, 403);
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  const to = body.to;
+  if (!to) {
+    return c.json({ success: false, error: 'Recipient "to" email address is required' }, 400);
+  }
+
+  const subject = body.subject || 'FYPilot Email Integration Test';
+  const message = body.message || 'This is a test notification confirming that SMTP2GO email delivery is working successfully!';
+  const recipientName = body.name || 'FYPilot User';
+
+  const html = buildNotificationEmail({
+    title: subject,
+    body: message,
+    recipientName,
+    actionText: 'Open FYPilot Dashboard',
+    actionUrl: body.actionUrl || resolveAppUrl(c.req.url, c.env),
+  });
+
+  const result = await sendEmail(c.env, {
+    to,
+    subject,
+    html,
+  });
+
+  if (!result.success) {
+    return c.json({ success: false, error: result.error }, 500);
+  }
+
+  return c.json({
+    success: true,
+    message: `Test email successfully dispatched to ${to}`,
+    id: result.id,
+  });
 });
 
 export { notificationRoutes };

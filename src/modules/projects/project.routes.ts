@@ -2,11 +2,54 @@ import { Hono } from 'hono';
 import type { Env } from '../ai/ai.types';
 import { generateId } from '../ai/ai.utils';
 import { logAuditEvent } from '../audit/audit.routes';
+import { deleteProjectsCascade } from '../../utils/cascade';
+import { requireBulkDeleteRole } from '../../utils/bulk-guard';
 
 type Variables = { userId: string; userRole: string };
 const projectRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 const EXECUTIVE_ROLES = new Set(['coordinator', 'hod', 'dean']);
 const isExecutiveRole = (role?: string | null) => !!role && EXECUTIVE_ROLES.has(role);
+
+// DELETE /api/projects/bulk — remove EVERY project.
+// Registered before `/:id` so the literal path is matched first.
+projectRoutes.delete('/bulk', async (c) => {
+  const actor = await requireBulkDeleteRole(c);
+  if (!actor) {
+    return c.json({ success: false, error: 'Only coordinators, HOD, Dean or admins can delete all projects' }, 403);
+  }
+
+  const body = await c.req.json().catch(() => ({} as any));
+  if (body?.confirm !== 'DELETE ALL PROJECTS') {
+    return c.json({ success: false, error: 'Confirmation phrase did not match' }, 400);
+  }
+
+  try {
+    const rows = await c.env.DB.prepare('SELECT id FROM projects').all();
+    const projects = (rows.results || []) as Array<Record<string, any>>;
+    if (projects.length === 0) {
+      return c.json({ success: true, message: 'There are no projects to delete.', deleted: 0 });
+    }
+
+    const ids = projects.map((p) => p.id);
+    await deleteProjectsCascade(c.env.DB, ids);
+
+    await logAuditEvent(c.env.DB, actor.userId, actor.role, 'projects_deleted_all', {
+      entityType: 'project',
+      entityId: '*',
+      details: `All ${projects.length} project(s) deleted`,
+      metadata: { scope: 'all', deleted_count: projects.length, project_ids: ids },
+    });
+
+    return c.json({
+      success: true,
+      message: `All ${projects.length} project(s) and their milestones, meetings and media were deleted.`,
+      deleted: projects.length,
+    });
+  } catch (e: any) {
+    console.error('Delete all projects error:', e);
+    return c.json({ success: false, error: 'Failed to delete all projects: ' + (e?.message || 'unknown error') }, 500);
+  }
+});
 
 // GET /api/projects
 projectRoutes.get('/', async (c) => {
@@ -33,7 +76,11 @@ projectRoutes.get('/', async (c) => {
 projectRoutes.get('/:id', async (c) => {
   const id = c.req.param('id');
   const project = await c.env.DB.prepare(
-    `SELECT p.*, u.name as supervisor_name FROM projects p LEFT JOIN users u ON p.supervisor_id = u.id WHERE p.id = ?`
+    `SELECT p.*, u.name as supervisor_name, pr.group_id as group_id
+     FROM projects p
+     LEFT JOIN users u ON p.supervisor_id = u.id
+     LEFT JOIN proposals pr ON p.proposal_id = pr.id
+     WHERE p.id = ?`
   ).bind(id).first();
   if (!project) return c.json({ success: false, error: 'Project not found' }, 404);
 

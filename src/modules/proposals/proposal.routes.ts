@@ -1,13 +1,56 @@
 import { Hono } from 'hono';
 import type { Env } from '../ai/ai.types';
 import { generateId } from '../ai/ai.utils';
-import { createNotification, notifyRole } from '../notifications/notification.routes';
+import { createNotification, createNotificationWithEmail, notifyRole } from '../notifications/notification.routes';
 import { logAuditEvent } from '../audit/audit.routes';
+import { deleteProposalsCascade } from '../../utils/cascade';
+import { requireBulkDeleteRole } from '../../utils/bulk-guard';
 
 type Variables = { userId: string; userRole: string };
 const proposalRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 const EXECUTIVE_ROLES = new Set(['coordinator', 'hod', 'dean']);
 const isExecutiveRole = (role?: string | null) => !!role && EXECUTIVE_ROLES.has(role);
+
+// DELETE /api/proposals/bulk — remove EVERY proposal.
+// Registered before `/:id` so the literal path is matched first.
+proposalRoutes.delete('/bulk', async (c) => {
+  const actor = await requireBulkDeleteRole(c);
+  if (!actor) {
+    return c.json({ success: false, error: 'Only coordinators, HOD, Dean or admins can delete all proposals' }, 403);
+  }
+
+  const body = await c.req.json().catch(() => ({} as any));
+  if (body?.confirm !== 'DELETE ALL PROPOSALS') {
+    return c.json({ success: false, error: 'Confirmation phrase did not match' }, 400);
+  }
+
+  try {
+    const rows = await c.env.DB.prepare('SELECT id FROM proposals').all();
+    const proposals = (rows.results || []) as Array<Record<string, any>>;
+    if (proposals.length === 0) {
+      return c.json({ success: true, message: 'There are no proposals to delete.', deleted: 0 });
+    }
+
+    const ids = proposals.map((p) => p.id);
+    await deleteProposalsCascade(c.env.DB, ids);
+
+    await logAuditEvent(c.env.DB, actor.userId, actor.role, 'proposals_deleted_all', {
+      entityType: 'proposal',
+      entityId: '*',
+      details: `All ${proposals.length} proposal(s) deleted`,
+      metadata: { scope: 'all', deleted_count: proposals.length, proposal_ids: ids },
+    });
+
+    return c.json({
+      success: true,
+      message: `All ${proposals.length} proposal(s) and their linked projects were deleted.`,
+      deleted: proposals.length,
+    });
+  } catch (e: any) {
+    console.error('Delete all proposals error:', e);
+    return c.json({ success: false, error: 'Failed to delete all proposals: ' + (e?.message || 'unknown error') }, 500);
+  }
+});
 
 // GET /api/proposals - List all proposals
 proposalRoutes.get('/', async (c) => {
@@ -191,7 +234,7 @@ proposalRoutes.put('/:id', async (c) => {
         metadata: { proposal_id: id, status: body.status, actor_id: userId, actor_role: userRole }
       });
       const statusLabel = { approved: 'approved', rejected: 'rejected', under_review: 'sent for review', revision_requested: 'sent back for revision' };
-      await createNotification(c.env.DB, updated.submitted_by, {
+      await createNotificationWithEmail(c.env, updated.submitted_by, {
         type: 'proposal',
         title: `Your proposal was ${statusLabel[body.status] || body.status}`,
         body: `"${updated.title}" was ${statusLabel[body.status] || body.status} by the coordinator.`,
@@ -199,7 +242,7 @@ proposalRoutes.put('/:id', async (c) => {
         ref_id: id,
       });
       if (body.supervisor_id && body.supervisor_id !== '') {
-        await createNotification(c.env.DB, body.supervisor_id, {
+        await createNotificationWithEmail(c.env, body.supervisor_id, {
           type: 'proposal',
           title: 'Proposal assigned to you',
           body: `"${updated.title}" has been assigned to you as supervisor.`,
