@@ -186,17 +186,16 @@ async function callSmtp2GoApi(
  */
 export function resolveAppUrl(requestUrl: string, env?: { APP_BASE_URL?: string }): string {
   const fallback = (env?.APP_BASE_URL || '').trim().replace(/\/+$/, '');
-  let origin = '';
+  if (fallback) return fallback;
   try {
     const parsed = new URL(requestUrl);
-    // Ignore internal/localhost origins so a tunnel or proxy header does not
-    // produce unusable links in production.
-    const isLocal = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1';
-    if (!isLocal) origin = parsed.origin;
+    if (parsed.origin && parsed.origin !== 'null') {
+      return parsed.origin;
+    }
   } catch {
-    origin = '';
+    // fallback below
   }
-  return origin || fallback || 'http://localhost:3000';
+  return 'http://localhost:3000';
 }
 
 /**

@@ -296,7 +296,7 @@ function render() {
 
   // The external examiner opens this from a scanned QR code, so it renders
   // before any authentication check.
-  if (window.location.pathname.startsWith('/evaluate/')) {
+  if (window.location.pathname === '/evaluate' || window.location.pathname.startsWith('/evaluate/')) {
     renderPublicEvaluationPage(app);
     return;
   }
@@ -2093,7 +2093,32 @@ function recomputeEvaluationTotals(sections) {
 // ----- Public evaluator form (opened from a scanned QR code) -----
 
 function renderPublicEvaluationPage(app) {
-  const token = window.location.pathname.split('/').filter(Boolean)[1] || '';
+  const parts = window.location.pathname.split('/').filter(Boolean);
+  let token = parts[1] || '';
+  if (!token) {
+    const urlParams = new URLSearchParams(window.location.search);
+    token = urlParams.get('token') || '';
+  }
+
+  if (!token) {
+    app.innerHTML = `
+      <div class="min-h-screen bg-gradient-to-br from-slate-900 via-fypilot-900 to-indigo-950 py-12 px-4 sm:px-6 flex items-center justify-center">
+        <div class="max-w-md w-full bg-white rounded-2xl shadow-2xl p-6 text-center fade-in">
+          <i class="fas fa-qrcode text-4xl text-fypilot-600 mb-3 block"></i>
+          <h2 class="text-lg font-bold text-gray-900">FYP Evaluation Portal</h2>
+          <p class="text-xs text-gray-500 mt-1 mb-4">Please enter the 32-character evaluation token from your evaluation QR code or link.</p>
+          <div class="flex gap-2">
+            <input type="text" id="manual-eval-token" placeholder="Paste 32-char token..." class="flex-1 px-3 py-2 border border-gray-300 rounded-xl text-xs font-mono focus:ring-2 focus:ring-fypilot-500 focus:outline-none" />
+            <button onclick="const t = document.getElementById('manual-eval-token').value.trim(); if(t) { window.location.href = '/evaluate/' + t; }" class="bg-fypilot-600 hover:bg-fypilot-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all">Open</button>
+          </div>
+          <div class="mt-4 pt-4 border-t border-gray-100">
+            <a href="/" class="text-xs text-fypilot-600 hover:underline font-semibold"><i class="fas fa-arrow-left mr-1"></i>Back to FYPilot Home</a>
+          </div>
+        </div>
+      </div>`;
+    return;
+  }
+
   app.innerHTML = `
     <div class="min-h-screen bg-gradient-to-br from-slate-900 via-fypilot-900 to-indigo-950 py-6 px-4 sm:px-6">
       <div class="max-w-3xl mx-auto" id="evaluation-form-root">
@@ -2606,13 +2631,15 @@ function qrRenderOptions(size) {
 async function drawEvaluationQr() {
   const canvas = document.getElementById('evaluation-qr-canvas');
   const link = state.evalLink;
-  if (!canvas || !link || !link.url) return;
+  if (!canvas || !link) return;
+  const qrUrl = link.token ? `${window.location.origin}/evaluate/${link.token}` : link.url;
+  if (!qrUrl) return;
 
   try {
     const lib = await loadQrLib();
     // The panel may have been re-rendered while the library was loading.
     if (!document.body.contains(canvas)) return;
-    await lib.toCanvas(canvas, link.url, qrRenderOptions(176));
+    await lib.toCanvas(canvas, qrUrl, qrRenderOptions(176));
   } catch (e) {
     console.error('QR generation failed:', e);
   }
@@ -2647,6 +2674,9 @@ function renderEvaluationPanelBody() {
     </div>`;
   }
 
+  const currentOrigin = window.location.origin;
+  const evalUrl = link.token ? `${currentOrigin}/evaluate/${link.token}` : (link.url || '');
+
   return `
   <div class="flex flex-col sm:flex-row gap-5 sm:items-start">
     <div class="shrink-0 mx-auto sm:mx-0 p-3 bg-white border-2 border-fypilot-200 rounded-2xl">
@@ -2660,7 +2690,7 @@ function renderEvaluationPanelBody() {
         <p class="text-[11px] text-gray-500 mt-0.5">${link.evaluationCount || 0} submission${link.evaluationCount === 1 ? '' : 's'} received. Print or share this QR so the examiner can score the group on their phone.</p>
       </div>
       <div class="flex items-center gap-2">
-        <input readonly value="${escapeHtml(link.url)}" class="flex-1 min-w-0 px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl text-[11px] font-mono text-gray-700" />
+        <input readonly value="${escapeHtml(evalUrl)}" class="flex-1 min-w-0 px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl text-[11px] font-mono text-gray-700" />
         <button onclick="copyEvaluationLink()" class="shrink-0 bg-fypilot-600 hover:bg-fypilot-700 text-white px-3 py-2 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1.5"><i class="fas fa-copy"></i> Copy</button>
       </div>
       <div class="flex flex-wrap gap-2">
@@ -2678,8 +2708,10 @@ function renderEvaluationPanelBody() {
 /** Open the evaluator form itself, to prove the link works before printing it. */
 function openEvaluationLink() {
   const link = state.evalLink;
-  if (!link || !link.url) return;
-  window.open(link.url, '_blank', 'noopener');
+  if (!link) return;
+  const url = link.token ? `${window.location.origin}/evaluate/${link.token}` : link.url;
+  if (!url) return;
+  window.open(url, '_blank', 'noopener');
 }
 
 function evaluationQrFileName() {
@@ -2768,8 +2800,10 @@ function printEvaluationQr() {
 async function copyEvaluationLink() {
   const link = state.evalLink;
   if (!link) return;
+  const url = link.token ? `${window.location.origin}/evaluate/${link.token}` : (link.url || '');
+  if (!url) return;
   try {
-    await navigator.clipboard.writeText(link.url);
+    await navigator.clipboard.writeText(url);
     showToast('Evaluation link copied', 'success');
   } catch (e) {
     showToast('Could not copy the link', 'error');
