@@ -20,6 +20,8 @@ Repository: [https://github.com/mohdtaharana/fypilot](https://github.com/mohdtah
 | **PWA & Offline Shell** | Service Worker (`public/sw.js`) with stale-while-revalidate caching and app manifest |
 | **Build & Bundler** | **Vite** (`@hono/vite-build/cloudflare-pages` compiling to `dist/_worker.js`) |
 
+![FYPilot system architecture](public/images/flow-chart-fypilot.jpg)
+
 - **Wrangler Project Name:** `fypilot`
 - **D1 Database Binding:** `DB` (`fypilot-production`)
 - **Compatibility Flags:** `nodejs_compat`
