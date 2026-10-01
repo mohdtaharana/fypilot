@@ -841,13 +841,12 @@ applicationRoutes.put('/:id/status', async (c) => {
               let memUserId: string;
               if (sidOwner) {
                 memUserId = sidOwner.id as string;
-                // Keep an existing password — only default it when none is set.
                 await c.env.DB.prepare(
-                  `UPDATE users SET status = 'active', role = 'student', department = ?,
-                     program = ?, shift = ?, password = COALESCE(password, ?), internship_certificate = ?,
+                  `UPDATE users SET email = ?, name = ?, status = 'active', role = 'student', department = ?,
+                     program = ?, shift = ?, password = ?, internship_certificate = ?,
                      internship_filename = ?, transcript_certificate = ?, transcript_filename = ?
                    WHERE id = ?`
-                ).bind(app.department, app.program, app.shift, provisioned_password, m.internship_certificate, m.internship_filename, m.transcript_certificate, m.transcript_filename, memUserId).run();
+                ).bind(memEmail, memName, app.department, app.program, app.shift, provisioned_password, m.internship_certificate, m.internship_filename, m.transcript_certificate, m.transcript_filename, memUserId).run();
               } else {
                 memUserId = generateId();
                 await c.env.DB.prepare(
