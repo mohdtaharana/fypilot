@@ -20,6 +20,12 @@ Repository: [https://github.com/mohdtaharana/fypilot](https://github.com/mohdtah
 | **PWA & Offline Shell** | Service Worker (`public/sw.js`) with stale-while-revalidate caching and app manifest |
 | **Build & Bundler** | **Vite** (`@hono/vite-build/cloudflare-pages` compiling to `dist/_worker.js`) |
 
+### FYPilot Platform Workflow
+
+![FYPilot platform workflow](public/images/FYPilot%20Final%20Year%20Project%20Workflow.png)
+
+### Complete FYP Lifecycle Architecture
+
 ![FYPilot complete lifecycle architecture](public/images/FYPilot_%20Complete%20FYP%20Lifecycle%20Architecture.png)
 
 - **Wrangler Project Name:** `fypilot`
