@@ -583,7 +583,7 @@ export class AIService {
   async recommendSupervisor(proposalId: string, userId: string, userRole: string): Promise<AIResponse<SupervisorRecommendationResult>> {
     const startTime = Date.now();
 
-    const proposal = await this.env.DB.prepare('SELECT * FROM proposals WHERE id = ?').bind(proposalId).first();
+    const proposal = await this.env.DB.prepare('SELECT * FROM proposals WHERE id = ?').bind(proposalId).first() as Record<string, any> | null;
     if (!proposal) return { success: false, error: 'Proposal not found' };
 
     // Get all supervisors
@@ -784,7 +784,7 @@ export class AIService {
 
     // Fallback Summary
     const fallbackSummary: ProjectSummaryResult = {
-      summary: `Executive Summary for ${project.title}: The project is currently at ${project.progress || 0}% completion with a health status of '${(project.health || 'healthy').replace('_', ' ')}'.`,
+      summary: `Executive Summary for ${project.title}: The project is currently at ${project.progress || 0}% completion with a health status of '${String(project.health || 'healthy').replace('_', ' ')}'.`,
       keyMilestones: ['Proposal Approval', 'Mid-Term Progress Review', 'Final System Defense'],
       currentBlockers: [],
       nextActions: ['Schedule a progress review', 'Prepare demonstration build'],

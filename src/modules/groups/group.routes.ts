@@ -5,10 +5,16 @@ import { deleteGroupsCascade } from '../../utils/cascade';
 import { requireBulkDeleteRole } from '../../utils/bulk-guard';
 import { createNotification, notifyRole } from '../notifications/notification.routes';
 import { logAuditEvent } from '../audit/audit.routes';
+import { ensureUserDocumentColumns, validateMemberDocuments } from './member-docs';
 
 const groupRoutes = new Hono<{ Bindings: Env }>();
 const EXECUTIVE_ROLES = new Set(['coordinator', 'hod', 'dean']);
 const isExecutiveRole = (role?: string | null) => !!role && EXECUTIVE_ROLES.has(role);
+
+groupRoutes.use('*', async (c, next) => {
+  await ensureUserDocumentColumns(c.env.DB);
+  await next();
+});
 
 // DELETE /api/groups/bulk — remove EVERY group.
 // Registered before `/:id` so the literal path is matched first.
@@ -57,6 +63,10 @@ async function upsertGroupMemberAccount(db: any, member: any, fallbackDepartment
   const name = String(cleaned.name || cleaned.member_name || '').trim();
   const studentIdNum = String(cleaned.student_id_num || cleaned.studentIdNum || cleaned.student_id || '').trim();
   const password = String(cleaned.password || cleaned.member_password || 'student123').trim();
+  const internshipCertificate = String(cleaned.internship_certificate || cleaned.internship_certificate_pdf || cleaned.internship_letter || cleaned.internship_letter_pdf || cleaned.internship_doc || '').trim();
+  const internshipFilename = String(cleaned.internship_filename || cleaned.internship_pdf_name || 'internship_letter.pdf').trim();
+  const transcriptCertificate = String(cleaned.transcript_certificate || cleaned.transcript_certificate_pdf || cleaned.transcript || cleaned.transcript_pdf || cleaned.transcript_doc || '').trim();
+  const transcriptFilename = String(cleaned.transcript_filename || cleaned.transcript_pdf_name || 'transcript.pdf').trim();
 
   if (!explicitId && !email && !studentIdNum && !name) {
     return null;
@@ -115,6 +125,22 @@ async function upsertGroupMemberAccount(db: any, member: any, fallbackDepartment
       updates.push('password = ?');
       values.push(password);
     }
+    if (internshipCertificate && user.internship_certificate !== internshipCertificate) {
+      updates.push('internship_certificate = ?');
+      values.push(internshipCertificate);
+    }
+    if (internshipFilename && user.internship_filename !== internshipFilename) {
+      updates.push('internship_filename = ?');
+      values.push(internshipFilename);
+    }
+    if (transcriptCertificate && user.transcript_certificate !== transcriptCertificate) {
+      updates.push('transcript_certificate = ?');
+      values.push(transcriptCertificate);
+    }
+    if (transcriptFilename && user.transcript_filename !== transcriptFilename) {
+      updates.push('transcript_filename = ?');
+      values.push(transcriptFilename);
+    }
     if (user.status !== 'active') {
       updates.push('status = ?');
       values.push('active');
@@ -138,8 +164,8 @@ async function upsertGroupMemberAccount(db: any, member: any, fallbackDepartment
   const generatedName = name || `Student ${studentIdNum || 'Member'}`;
   const memberId = generateId();
   await db.prepare(
-    `INSERT INTO users (id, email, name, role, department, student_id_num, program, shift, status, password)
-     VALUES (?, ?, ?, 'student', ?, ?, ?, ?, 'active', ?)`
+    `INSERT INTO users (id, email, name, role, department, student_id_num, program, shift, status, password, internship_certificate, internship_filename, transcript_certificate, transcript_filename)
+     VALUES (?, ?, ?, 'student', ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)`
   ).bind(
     memberId,
     generatedEmail,
@@ -148,7 +174,11 @@ async function upsertGroupMemberAccount(db: any, member: any, fallbackDepartment
     studentIdNum || null,
     cleaned.program || null,
     cleaned.shift || null,
-    password.length >= 6 ? password : 'student123'
+    password.length >= 6 ? password : 'student123',
+    internshipCertificate || null,
+    internshipFilename || null,
+    transcriptCertificate || null,
+    transcriptFilename || null,
   ).run();
 
   return {
@@ -184,7 +214,7 @@ groupRoutes.get('/', async (c) => {
 // GET /api/groups/available-students — active students NOT already in a group (for member pickers)
 groupRoutes.get('/available-students', async (c) => {
   const result = await c.env.DB.prepare(
-    `SELECT u.id, u.name, u.email, u.department FROM users u
+    `SELECT u.id, u.name, u.email, u.department, u.internship_certificate, u.transcript_certificate FROM users u
      WHERE u.role = 'student' AND (u.status = 'active' OR u.status IS NULL)
      AND u.id NOT IN (
        SELECT gm.user_id FROM group_members gm
@@ -206,7 +236,7 @@ groupRoutes.get('/:id', async (c) => {
   if (!group) return c.json({ success: false, error: 'Group not found' }, 404);
 
   const members = await c.env.DB.prepare(
-    `SELECT u.id, u.name, u.email, u.department, gm.joined_at,
+    `SELECT u.id, u.name, u.email, u.department, u.internship_certificate, u.internship_filename, u.transcript_certificate, u.transcript_filename, gm.joined_at,
        CASE WHEN g.leader_id = u.id THEN 1 ELSE 0 END as is_leader
      FROM group_members gm
      JOIN users u ON gm.user_id = u.id
@@ -256,6 +286,12 @@ groupRoutes.post('/', async (c) => {
   const leaderUser = await c.env.DB.prepare('SELECT department FROM users WHERE id = ?').bind(userId).first() as { department?: string | null } | null;
   const group = await c.env.DB.prepare('SELECT * FROM groups WHERE id = ?').bind(id).first() as Record<string, any>;
   for (const memberInput of rawMemberInputs) {
+    if (memberInput && typeof memberInput === 'object') {
+      const docsValidation = await validateMemberDocuments(memberInput);
+      if (!docsValidation.ok) {
+        return c.json({ success: false, error: docsValidation.error }, 400);
+      }
+    }
     const memberId = memberInput && typeof memberInput === 'object' ? (memberInput.user_id || memberInput.memberId || memberInput.id) : memberInput;
     if (memberId === userId) continue;
     const count = await c.env.DB.prepare('SELECT COUNT(*) as c FROM group_members WHERE group_id = ?').bind(id).first();
@@ -265,6 +301,9 @@ groupRoutes.post('/', async (c) => {
       const memberResult = await upsertGroupMemberAccount(c.env.DB, memberInput, leaderUser?.department || null);
       if (!memberResult?.user) continue;
       const memberUserId = memberResult.user.id as string;
+      if (!memberResult.user.internship_certificate || !memberResult.user.transcript_certificate) {
+        return c.json({ success: false, error: 'Each member must upload both the internship letter and transcript PDF before joining the group.' }, 400);
+      }
       const otherGroup = await c.env.DB.prepare(
         `SELECT g.id FROM groups g JOIN group_members gm ON gm.group_id = g.id WHERE gm.user_id = ? AND g.status != 'rejected'`
       ).bind(memberUserId).first();
@@ -282,9 +321,12 @@ groupRoutes.post('/', async (c) => {
 
     const mid = String(memberId);
     const memberUser = await c.env.DB.prepare(
-      "SELECT id, name FROM users WHERE id = ? AND role = 'student' AND (status = 'active' OR status IS NULL)"
+      "SELECT id, name, internship_certificate, transcript_certificate FROM users WHERE id = ? AND role = 'student' AND (status = 'active' OR status IS NULL)"
     ).bind(mid).first();
     if (!memberUser) continue;
+    if (!memberUser.internship_certificate || !memberUser.transcript_certificate) {
+      return c.json({ success: false, error: 'This student must upload both the internship letter and transcript PDF before being added to the group.' }, 400);
+    }
     const otherGroup = await c.env.DB.prepare(
       `SELECT g.id FROM groups g JOIN group_members gm ON gm.group_id = g.id WHERE gm.user_id = ? AND g.status != 'rejected'`
     ).bind(mid).first();
@@ -344,9 +386,29 @@ groupRoutes.post('/:id/members', async (c) => {
   }
 
   const memberUser = await c.env.DB.prepare(
-    "SELECT id, name, email FROM users WHERE id = ? AND role = 'student' AND (status = 'active' OR status IS NULL)"
-  ).bind(resolvedMemberId).first() as { id: string; name: string; email: string } | null;
+    "SELECT id, name, email, internship_certificate, transcript_certificate FROM users WHERE id = ? AND role = 'student' AND (status = 'active' OR status IS NULL)"
+  ).bind(resolvedMemberId).first() as { id: string; name: string; email: string; internship_certificate?: string | null; transcript_certificate?: string | null } | null;
   if (!memberUser) return c.json({ success: false, error: 'Student not found or not active' }, 404);
+
+  if (memberData) {
+    const docsValidation = await validateMemberDocuments(memberData);
+    if (!docsValidation.ok) {
+      return c.json({ success: false, error: docsValidation.error }, 400);
+    }
+  }
+
+  const docsValidation = await validateMemberDocuments({
+    internship_certificate: memberUser?.internship_certificate || memberData?.internship_certificate || null,
+    transcript_certificate: memberUser?.transcript_certificate || memberData?.transcript_certificate || null,
+    transcript_text: memberData?.transcript_text || body?.transcript_text || null,
+  });
+  if (!docsValidation.ok) {
+    return c.json({ success: false, error: docsValidation.error }, 400);
+  }
+
+  if (!memberUser.internship_certificate || !memberUser.transcript_certificate) {
+    return c.json({ success: false, error: 'This student must upload both the internship letter and transcript PDF before being added to the group.' }, 400);
+  }
 
   const count = await c.env.DB.prepare('SELECT COUNT(*) as c FROM group_members WHERE group_id = ?').bind(id).first();
   if (Number(count?.c || 0) >= Number(group.max_members || 4)) {

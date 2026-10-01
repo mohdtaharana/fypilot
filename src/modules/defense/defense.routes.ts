@@ -281,7 +281,7 @@ function buildDefaultSlotsFromWindow(startTime: string, endTime: string, duratio
 
   for (let i = 0; i < groups.results.length; i++) {
     const group = groups.results[i] as Record<string, any>;
-    let planned = { start_time: null, end_time: null };
+    let planned: { start_time: string | null; end_time: string | null } = { start_time: null, end_time: null };
 
     for (let index = nextSlotCursor; index < slots.length; index++) {
       const candidate = slots[index];

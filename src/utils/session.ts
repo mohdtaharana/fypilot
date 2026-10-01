@@ -8,13 +8,16 @@
 const SESSION_COOKIE = 'fy_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 12;
 
+interface MinimalD1Statement {
+  bind(...values: unknown[]): MinimalD1Statement;
+  all<T = Record<string, unknown>>(): Promise<{ results: T[] }>;
+  run(): Promise<{ success: boolean }>;
+  first<T = Record<string, unknown>>(col?: string): Promise<T | null>;
+  raw<T = unknown[]>(): Promise<T[]>;
+}
+
 interface MinimalD1 {
-  prepare(query: string): {
-    bind(...values: unknown[]): {
-      run(): Promise<unknown>;
-      first<T = Record<string, unknown>>(): Promise<T | null>;
-    };
-  };
+  prepare(query: string): MinimalD1Statement;
 }
 
 let sessionTableChecked = false;

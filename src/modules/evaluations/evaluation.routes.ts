@@ -44,7 +44,7 @@ async function requireStaff(c: any): Promise<{ userId: string; role: string } | 
   if (headerUserId && headerUserId !== 'guest') {
     try {
       const user = await c.env.DB.prepare('SELECT id, role FROM users WHERE id = ?')
-        .bind(headerUserId).first<{ id: string; role: string }>();
+        .bind(headerUserId).first() as { id: string; role: string } | null;
       if (user && READ_ROLES.has(user.role)) {
         return { userId: user.id, role: user.role };
       }

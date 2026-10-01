@@ -68,8 +68,8 @@ dashboardRoutes.get('/people', async (c) => {
     membersByGroup.get(m.group_id)!.push(m);
   }
 
-  const groups = (groupsRows.results as any[]).map(g => {
-    const members = (membersByGroup.get(g.id) || []).map(m => ({
+  const groups = (groupsRows.results as any[]).map((g: any) => {
+    const members = (membersByGroup.get(g.id) || []).map((m: any) => ({
       id: m.user_id, name: m.name, avatar: m.avatar, email: m.email, department: m.department,
       is_leader: m.user_id === g.leader_id,
     }));
@@ -79,8 +79,8 @@ dashboardRoutes.get('/people', async (c) => {
   const groupLookup = new Map<string, any>();
   for (const g of groups) groupLookup.set(g.id, g);
 
-  const students = (studentsRows.results as any[]).map(s => {
-    const inGroup = groups.find(g => g.members.some(m => m.id === s.id));
+  const students = (studentsRows.results as any[]).map((s: any) => {
+    const inGroup = groups.find((g: any) => g.members.some((m: any) => m.id === s.id));
     return {
       ...s,
       group_id: inGroup ? inGroup.id : null,

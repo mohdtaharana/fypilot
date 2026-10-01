@@ -233,11 +233,17 @@ proposalRoutes.put('/:id', async (c) => {
         details: `Proposal status changed to ${body.status}`,
         metadata: { proposal_id: id, status: body.status, actor_id: userId, actor_role: userRole }
       });
-      const statusLabel = { approved: 'approved', rejected: 'rejected', under_review: 'sent for review', revision_requested: 'sent back for revision' };
+      const statusLabel: Record<string, string> = {
+        approved: 'approved',
+        rejected: 'rejected',
+        under_review: 'sent for review',
+        revision_requested: 'sent back for revision',
+      };
+      const proposalStatusText = statusLabel[String(body.status)] || String(body.status);
       await createNotificationWithEmail(c.env, updated.submitted_by, {
         type: 'proposal',
-        title: `Your proposal was ${statusLabel[body.status] || body.status}`,
-        body: `"${updated.title}" was ${statusLabel[body.status] || body.status} by the coordinator.`,
+        title: `Your proposal was ${proposalStatusText}`,
+        body: `"${updated.title}" was ${proposalStatusText} by the coordinator.`,
         link_view: 'proposals',
         ref_id: id,
       });

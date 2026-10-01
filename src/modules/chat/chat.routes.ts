@@ -248,19 +248,21 @@ chatRoutes.post('/', async (c) => {
   }
 
   const key = chatKey(userId, otherUserId);
-  let chat = await c.env.DB.prepare('SELECT * FROM chats WHERE id = ?').bind(key.id).first();
+  let chat = await c.env.DB.prepare('SELECT * FROM chats WHERE id = ?').bind(key.id).first() as Record<string, any> | null;
 
   if (!chat) {
     await c.env.DB.prepare(
       'INSERT INTO chats (id, user_a, user_b) VALUES (?, ?, ?)'
     ).bind(key.id, key.userA, key.userB).run();
-    chat = await c.env.DB.prepare('SELECT * FROM chats WHERE id = ?').bind(key.id).first();
+    chat = await c.env.DB.prepare('SELECT * FROM chats WHERE id = ?').bind(key.id).first() as Record<string, any> | null;
   }
+
+  const chatRecord = chat || { id: key.id, user_a: key.userA, user_b: key.userB } as Record<string, any>;
 
   return c.json({
     success: true,
     data: {
-      id: chat.id,
+      id: chatRecord.id,
       peer: {
         id: peer.id,
         name: peer.name,
@@ -446,9 +448,9 @@ chatRoutes.post('/:id/messages', async (c) => {
 
   await c.env.DB.prepare("UPDATE chats SET updated_at = datetime('now') WHERE id = ?").bind(chatId).run();
 
-  const peerId = chat.user_a === userId ? chat.user_b : chat.user_a;
+  const peerId = String(chat.user_a === userId ? chat.user_b : chat.user_a);
   const preview = type === 'text' ? (content || '').slice(0, 80) : type === 'image' ? '📷 Photo' : type === 'voice' ? '🎤 Voice message' : '📎 File';
-  const sender = await c.env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(userId).first();
+  const sender = await c.env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(userId).first() as { name?: string } | null;
   await createNotification(c.env.DB, peerId, {
     type: 'chat',
     title: `New message from ${sender?.name || 'someone'}`,
@@ -459,7 +461,7 @@ chatRoutes.post('/:id/messages', async (c) => {
 
   const row = await c.env.DB.prepare(
     `${MESSAGE_SELECT} WHERE m.id = ?`
-  ).bind(id).first();
+  ).bind(id).first() as Record<string, any> | null;
 
   await touchPresence(c.env.DB, userId);
 

@@ -1,0 +1,1 @@
+ALTER TABLE student_applications ADD COLUMN transcript_text TEXT;

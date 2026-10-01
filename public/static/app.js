@@ -111,6 +111,7 @@ const state = {
   selectedGroup: null,
   myGroup: null,
   students: [],
+  pendingStudentDocuments: null,
   people: null,
   peopleView: 'grid',
   peopleTab: 'all',
@@ -135,7 +136,7 @@ const state = {
     objectives: '',
     methodology: '',
     technologies: '',
-    members: [{ name: '', student_id_num: '' }],
+    members: [{ name: '', student_id_num: '', transcript_text: '' }],
     pref_1: '',
     pref_2: '',
     pref_3: '',
@@ -145,7 +146,10 @@ const state = {
     pdf_size: '',
     transcript_certificate_pdf: null,
     transcript_pdf_name: '',
-    transcript_pdf_size: ''
+    transcript_pdf_size: '',
+    transcript_text: '',
+    transcript_verification: null,
+    transcript_verification_status: 'not_checked'
   },
   applySubmitted: false,
   applySubmittedData: null,
@@ -4597,12 +4601,16 @@ function renderGroupProfile() {
       </div>
       <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
         ${members.map(m => `
-          <div class="flex items-center justify-between p-3 rounded-xl border border-gray-200">
-            <div class="flex items-center gap-3 min-w-0">
+          <div class="flex items-center justify-between p-3 rounded-xl border border-gray-200 gap-3">
+            <div class="flex items-center gap-3 min-w-0 flex-1">
               <div class="w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold shrink-0 ${m.is_leader ? 'bg-amber-100 text-amber-700' : 'bg-fypilot-100 text-fypilot-700'}">${(m.name || '?').charAt(0)}</div>
-              <div class="min-w-0">
+              <div class="min-w-0 flex-1">
                 <div class="text-xs font-bold text-gray-900 truncate flex items-center gap-1.5">${m.name}${m.is_leader ? '<span class="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-bold uppercase">Leader</span>' : ''}</div>
                 <div class="text-[11px] text-gray-500 truncate">${m.email}${m.department ? ' &bull; ' + m.department : ''}</div>
+                <div class="mt-2 grid grid-cols-2 gap-1.5">
+                  ${m.internship_certificate ? `<a href="${m.internship_certificate}" target="_blank" rel="noopener noreferrer" class="text-[10px] font-semibold text-fypilot-700 bg-fypilot-50 border border-fypilot-100 rounded-lg px-2 py-1 text-center hover:bg-fypilot-100">Internship</a>` : '<span class="text-[10px] text-rose-600 bg-rose-50 border border-rose-100 rounded-lg px-2 py-1 text-center">No internship</span>'}
+                  ${m.transcript_certificate ? `<a href="${m.transcript_certificate}" target="_blank" rel="noopener noreferrer" class="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-2 py-1 text-center hover:bg-indigo-100">Transcript</a>` : '<span class="text-[10px] text-rose-600 bg-rose-50 border border-rose-100 rounded-lg px-2 py-1 text-center">No transcript</span>'}
+                </div>
               </div>
             </div>
             ${canManage && !m.is_leader ? `<button onclick="removeGroupMember('${g.id}','${m.id}')" class="text-gray-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition-colors" title="Remove member"><i class="fas fa-times"></i></button>` : ''}
@@ -4669,6 +4677,96 @@ function renderProfile() {
     <input type="file" id="avatar-file-input" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" class="hidden" onchange="handleAvatarUpload(event)" />
     <div id="profile-content" class="grid grid-cols-1 lg:grid-cols-2 gap-6">Loading...</div>
   </div>`;
+}
+
+function showStudentDocumentUploadModal() {
+  const u = state.currentUser || {};
+  state.pendingStudentDocuments = {
+    internship_certificate: u.internship_certificate || '',
+    internship_filename: u.internship_filename || 'internship_letter.pdf',
+    transcript_certificate: u.transcript_certificate || '',
+    transcript_filename: u.transcript_filename || 'transcript.pdf',
+  };
+
+  const overlay = document.createElement('div');
+  overlay.id = 'group-modal-overlay';
+  overlay.className = 'fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4';
+  overlay.innerHTML = `
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto fade-in">
+    <div class="p-5 border-b border-gray-100 flex items-center justify-between">
+      <h3 class="font-bold text-gray-900">Upload Student Documents</h3>
+      <button onclick="closeGroupModal()" class="w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-700 flex items-center justify-center"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="p-5 space-y-4">
+      <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-700">
+        Every student member must have both an internship letter and academic transcript PDF before the group can be finalized.
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-gray-700 mb-2">Internship Letter PDF</label>
+        <input id="student-doc-internship-input" type="file" accept="application/pdf,.pdf" class="hidden" onchange="handleStudentDocumentUpload(event, 'internship')" />
+        <button onclick="document.getElementById('student-doc-internship-input').click()" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm font-semibold text-gray-700 hover:border-fypilot-500 hover:bg-fypilot-50 transition-all">
+          <i class="fas fa-upload mr-2"></i>${u.internship_certificate ? 'Replace Internship PDF' : 'Upload Internship Letter PDF'}
+        </button>
+        <p id="student-doc-internship-name" class="text-[11px] text-gray-500 mt-2 truncate">${u.internship_filename || 'No internship letter uploaded yet.'}</p>
+      </div>
+      <div>
+        <label class="block text-xs font-semibold text-gray-700 mb-2">Academic Transcript PDF</label>
+        <input id="student-doc-transcript-input" type="file" accept="application/pdf,.pdf" class="hidden" onchange="handleStudentDocumentUpload(event, 'transcript')" />
+        <button onclick="document.getElementById('student-doc-transcript-input').click()" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm font-semibold text-gray-700 hover:border-fypilot-500 hover:bg-fypilot-50 transition-all">
+          <i class="fas fa-upload mr-2"></i>${u.transcript_certificate ? 'Replace Transcript PDF' : 'Upload Transcript PDF'}
+        </button>
+        <p id="student-doc-transcript-name" class="text-[11px] text-gray-500 mt-2 truncate">${u.transcript_filename || 'No academic transcript uploaded yet.'}</p>
+      </div>
+      <button onclick="submitStudentDocumentUpload()" class="w-full bg-fypilot-600 hover:bg-fypilot-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-md transition-all"><i class="fas fa-save mr-1"></i>Save Documents</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function handleStudentDocumentUpload(e, type) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  if (!validateUploadedFile(file, {
+    allowedMimeTypes: ['application/pdf'],
+    allowedExtensions: ['.pdf'],
+    maxBytes: 5 * 1024 * 1024,
+    label: type === 'internship' ? 'internship letter' : 'transcript'
+  })) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    state.pendingStudentDocuments = {
+      ...(state.pendingStudentDocuments || {}),
+      [`${type}_certificate`]: reader.result,
+      [`${type}_filename`]: file.name,
+    };
+    const nameEl = document.getElementById(`student-doc-${type}-name`);
+    if (nameEl) nameEl.textContent = file.name;
+  };
+  reader.readAsDataURL(file);
+}
+
+async function submitStudentDocumentUpload() {
+  const payload = state.pendingStudentDocuments || {};
+  if (!payload.internship_certificate || !payload.transcript_certificate) {
+    showToast('Both the internship letter and transcript are required before saving.', 'error');
+    return;
+  }
+  try {
+    const res = await api(`/users/${state.currentUser.id}/documents`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        internship_certificate: payload.internship_certificate,
+        internship_filename: payload.internship_filename || 'internship_letter.pdf',
+        transcript_certificate: payload.transcript_certificate,
+        transcript_filename: payload.transcript_filename || 'transcript.pdf',
+      })
+    });
+    state.currentUser = { ...state.currentUser, ...res.data };
+    localStorage.setItem('fypilot_user', JSON.stringify(state.currentUser));
+    showToast(res.message || 'Documents saved successfully!', 'success');
+    closeGroupModal();
+    render();
+  } catch (e) { /* handled by api helper */ }
 }
 
 function triggerAvatarUpload() {
@@ -4919,6 +5017,30 @@ async function loadProfile() {
       const verifiedMeetingsCount = sp && sp.meetingStats ? sp.meetingStats.verifiedMeetings : 0;
       const pendingMeetingsCount = sp && sp.meetingStats ? sp.meetingStats.pendingMeetings : 0;
 
+      const docsPanel = `
+        <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
+          <h3 class="font-bold text-gray-900 text-sm mb-3"><i class="fas fa-file-pdf text-fypilot-500 mr-2"></i>Student Documents</h3>
+          <div class="space-y-3">
+            <div class="rounded-xl border border-gray-200 p-3">
+              <div class="flex items-center justify-between gap-2 mb-1">
+                <span class="text-[11px] font-semibold text-gray-700">Internship Letter</span>
+                ${user.internship_certificate ? `<a href="${user.internship_certificate}" target="_blank" rel="noopener noreferrer" class="text-[10px] font-bold text-fypilot-700 hover:underline">Open PDF</a>` : '<span class="text-[10px] text-rose-600 font-bold">Not uploaded</span>'}
+              </div>
+              <p class="text-[10px] text-gray-500 truncate">${user.internship_filename || 'No file uploaded yet'}</p>
+            </div>
+            <div class="rounded-xl border border-gray-200 p-3">
+              <div class="flex items-center justify-between gap-2 mb-1">
+                <span class="text-[11px] font-semibold text-gray-700">Academic Transcript</span>
+                ${user.transcript_certificate ? `<a href="${user.transcript_certificate}" target="_blank" rel="noopener noreferrer" class="text-[10px] font-bold text-fypilot-700 hover:underline">Open PDF</a>` : '<span class="text-[10px] text-rose-600 font-bold">Not uploaded</span>'}
+              </div>
+              <p class="text-[10px] text-gray-500 truncate">${user.transcript_filename || 'No file uploaded yet'}</p>
+            </div>
+          </div>
+          <button onclick="showStudentDocumentUploadModal()" class="mt-3 w-full bg-fypilot-600 hover:bg-fypilot-700 text-white px-3 py-2 rounded-xl text-xs font-semibold transition-all">
+            <i class="fas fa-upload mr-1"></i>${user.internship_certificate && user.transcript_certificate ? 'Update Documents' : 'Upload Documents'}
+          </button>
+        </div>`;
+
       sections += `
         <!-- Verified Meetings Metric Card -->
         <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
@@ -4929,6 +5051,8 @@ async function loadProfile() {
             <p class="text-[10px] text-emerald-600 mt-0.5">${pendingMeetingsCount} pending verification</p>
           </div>
         </div>
+
+        ${docsPanel}
 
         <div class="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
           <h3 class="font-bold text-gray-900 text-sm mb-3"><i class="fas fa-users text-fypilot-500 mr-2"></i>My Group</h3>
@@ -5048,7 +5172,7 @@ async function loadAllStudents() {
 
 async function showCreateGroupModal() {
   const students = await loadAllStudents();
-  const candidates = students.filter(s => s.id !== state.currentUser.id);
+  const candidates = students.filter(s => s.id !== state.currentUser.id && s.internship_certificate && s.transcript_certificate);
   const overlay = document.createElement('div');
   overlay.id = 'group-modal-overlay';
   overlay.className = 'fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4';
@@ -5073,12 +5197,13 @@ async function showCreateGroupModal() {
             <label class="flex items-center gap-3 p-3 rounded-xl border border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors">
               <input type="checkbox" class="member-check accent-fypilot-600" value="${s.id}" onchange="updateMemberPicker()" />
               <span class="w-8 h-8 bg-fypilot-100 text-fypilot-700 rounded-lg flex items-center justify-center text-xs font-bold shrink-0">${s.name.charAt(0)}</span>
-              <span class="min-w-0">
+              <span class="min-w-0 flex-1">
                 <span class="block text-xs font-semibold text-gray-800 truncate">${s.name}</span>
                 <span class="block text-[11px] text-gray-500 truncate">${s.email}</span>
               </span>
+              <span class="text-[10px] font-bold bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full">Docs OK</span>
             </label>
-          `).join('') : '<p class="text-xs text-gray-400">No other students available.</p>'}
+          `).join('') : '<p class="text-xs text-gray-400">No other students with uploaded internship letter and transcript are available.</p>'}
         </div>
         <p id="group-member-hint" class="text-[11px] text-gray-400 mt-2"></p>
       </div>
@@ -5121,8 +5246,8 @@ async function submitCreateGroup() {
 async function showAddMemberModal(groupId) {
   const students = await loadAllStudents();
   const existingIds = ((state.selectedGroup && state.selectedGroup.members) || []).map(m => m.id);
-  const candidates = students.filter(s => !existingIds.includes(s.id));
-  if (candidates.length === 0) { showToast('No more students available to add.', 'warning'); return; }
+  const candidates = students.filter(s => !existingIds.includes(s.id) && s.internship_certificate && s.transcript_certificate);
+  if (candidates.length === 0) { showToast('No more students with uploaded internship letter and transcript are available to add.', 'warning'); return; }
   const overlay = document.createElement('div');
   overlay.id = 'group-modal-overlay';
   overlay.className = 'fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4';
@@ -5138,12 +5263,13 @@ async function showAddMemberModal(groupId) {
           <label class="flex items-center gap-3 p-3 rounded-xl border border-gray-200 hover:bg-gray-50 cursor-pointer transition-colors">
             <input type="radio" name="add-member-radio" class="add-member-radio accent-fypilot-600" value="${s.id}" />
             <span class="w-8 h-8 bg-fypilot-100 text-fypilot-700 rounded-lg flex items-center justify-center text-xs font-bold shrink-0">${s.name.charAt(0)}</span>
-            <span class="min-w-0">
+            <span class="min-w-0 flex-1">
               <span class="block text-xs font-semibold text-gray-800 truncate">${s.name}</span>
               <span class="block text-[11px] text-gray-500 truncate">${s.email}</span>
             </span>
+            <span class="text-[10px] font-bold bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full">Docs OK</span>
           </label>
-        `).join('') : '<p class="text-xs text-gray-400">No more students available.</p>'}
+        `).join('') : '<p class="text-xs text-gray-400">No more students with required uploaded documents are available.</p>'}
       </div>
       <button onclick="submitAddMember('${groupId}')" class="w-full bg-fypilot-600 hover:bg-fypilot-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold shadow-md transition-all"><i class="fas fa-user-plus mr-1"></i>Add Member</button>
     </div>
@@ -7216,6 +7342,26 @@ function setApplyStep(step) {
         showToast('Academic Transcript (PDF ONLY) is required', 'error');
         return;
       }
+      if (state.applyForm.transcript_verification_status !== 'passed') {
+        showToast('Your transcript must pass verification before continuing', 'error');
+        return;
+      }
+      for (const [index, member] of state.applyForm.members.entries()) {
+        const hasDetails = [member.name, member.student_id_num, member.email].some(value => String(value || '').trim());
+        if (!hasDetails) continue;
+        if (!String(member.name || '').trim() || !String(member.student_id_num || '').trim()) {
+          showToast(`Member ${index + 1}: name and student ID are required`, 'error');
+          return;
+        }
+        if (!member.internship_certificate || !member.transcript_certificate) {
+          showToast(`Member ${index + 1}: upload both the internship letter and transcript`, 'error');
+          return;
+        }
+        if (member.transcript_verification_status !== 'passed') {
+          showToast(`Member ${index + 1}: transcript must pass verification before continuing`, 'error');
+          return;
+        }
+      }
     } else if (state.applyStep === 3) {
       if (!state.applyForm.pref_1) {
         showToast('Supervisor Preference 1 is required', 'error');
@@ -7232,7 +7378,7 @@ function addApplyMember() {
     showToast('Maximum 3 additional group members allowed (4 total)', 'warning');
     return;
   }
-  state.applyForm.members.push({ name: '', student_id_num: '', email: '' });
+  state.applyForm.members.push({ name: '', student_id_num: '', email: '', internship_certificate: null, transcript_certificate: null, transcript_text: '', transcript_verification: null, transcript_verification_status: 'not_checked' });
   render();
 }
 
@@ -7265,6 +7411,34 @@ function handleApplicationPdfPick(e) {
   reader.readAsDataURL(file);
 }
 
+async function extractTextFromPDF(file) {
+  const pdfjsLib = window.pdfjsLib;
+  if (!pdfjsLib || typeof pdfjsLib.getDocument !== 'function') {
+    throw new Error('PDF text reader is unavailable. Refresh the page and try again.');
+  }
+
+  const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+  let fullText = '';
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const textContent = await page.getTextContent();
+    fullText += `${textContent.items.map((item) => ('str' in item ? item.str : '')).join(' ')}\n`;
+  }
+  return fullText.trim();
+}
+
+async function verifyTranscriptFile(file) {
+  const rawText = await extractTextFromPDF(file);
+  if (!rawText) throw new Error('Transcript text could not be read. Upload a searchable PDF transcript.');
+
+  const response = await api('/applications/verify-transcript', {
+    method: 'POST',
+    silentError: true,
+    body: JSON.stringify({ raw_text: rawText }),
+  });
+  return { rawText, verification: response.data };
+}
+
 function handleTranscriptPdfPick(e) {
   const file = e.target.files && e.target.files[0];
   if (!file) return;
@@ -7280,11 +7454,79 @@ function handleTranscriptPdfPick(e) {
   }
 
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     state.applyForm.transcript_certificate_pdf = reader.result;
     state.applyForm.transcript_pdf_name = file.name;
     state.applyForm.transcript_pdf_size = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
+    state.applyForm.transcript_text = '';
+    state.applyForm.transcript_verification = null;
+    state.applyForm.transcript_verification_status = 'checking';
     render();
+    try {
+      const { rawText, verification } = await verifyTranscriptFile(file);
+      state.applyForm.transcript_text = rawText;
+      state.applyForm.transcript_verification = verification;
+      state.applyForm.transcript_verification_status = verification?.verification_result?.is_eligible ? 'passed' : 'failed';
+      if (state.applyForm.transcript_verification_status === 'failed') {
+        showToast(verification?.verification_result?.rejection_reasons?.join(' ') || 'Transcript does not meet the eligibility requirements.', 'error');
+      }
+    } catch (error) {
+      state.applyForm.transcript_verification_status = 'failed';
+      showToast(error?.message || 'Transcript could not be verified. Upload a searchable transcript PDF.', 'error');
+    }
+    render();
+  };
+  reader.readAsDataURL(file);
+}
+
+async function handleApplyMemberPdfPick(e, memberIndex, documentType) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+
+  const label = documentType === 'internship' ? 'Member Internship Letter' : 'Member Academic Transcript';
+  if (!validateUploadedFile(file, {
+    allowedMimeTypes: ['application/pdf'],
+    allowedExtensions: ['.pdf'],
+    maxBytes: 10 * 1024 * 1024,
+    label,
+  })) {
+    e.target.value = '';
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = async () => {
+    const member = state.applyForm.members[memberIndex];
+    if (!member) return;
+    if (documentType === 'internship') {
+      member.internship_certificate = reader.result;
+      member.internship_filename = file.name;
+    } else {
+      member.transcript_certificate = reader.result;
+      member.transcript_filename = file.name;
+      member.transcript_text = '';
+      member.transcript_verification = null;
+      member.transcript_verification_status = 'checking';
+    }
+    member[`${documentType}_size`] = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
+    render();
+
+    if (documentType === 'transcript') {
+      try {
+        const { rawText, verification } = await verifyTranscriptFile(file);
+        if (!state.applyForm.members.includes(member)) return;
+        member.transcript_text = rawText;
+        member.transcript_verification = verification;
+        member.transcript_verification_status = verification?.verification_result?.is_eligible ? 'passed' : 'failed';
+        if (member.transcript_verification_status === 'failed') {
+          showToast(`Member ${memberIndex + 1}: ${verification?.verification_result?.rejection_reasons?.join(' ') || 'Transcript is not eligible.'}`, 'error');
+        }
+      } catch (error) {
+        member.transcript_verification_status = 'failed';
+        showToast(`Member ${memberIndex + 1}: ${error?.message || 'transcript could not be verified. Upload a searchable PDF.'}`, 'error');
+      }
+      render();
+    }
   };
   reader.readAsDataURL(file);
 }
@@ -7537,11 +7779,12 @@ function renderPublicApplicationPage() {
                     <i class="fas fa-file-pdf text-red-500 text-xl shrink-0"></i>
                     <div class="text-left min-w-0 flex-1">
                       <span class="block text-xs font-bold text-gray-800 truncate">${f.transcript_pdf_name}</span>
-                      <span class="text-[10px] text-gray-400 block truncate">${f.transcript_pdf_size} &bull; PDF Verified</span>
+                      <span class="text-[10px] ${f.transcript_verification_status === 'passed' ? 'text-emerald-700' : f.transcript_verification_status === 'failed' ? 'text-rose-700' : 'text-amber-700'} block truncate">${f.transcript_pdf_size} &bull; ${f.transcript_verification_status === 'passed' ? 'Eligible transcript' : f.transcript_verification_status === 'failed' ? 'Transcript is not eligible' : f.transcript_verification_status === 'checking' ? 'Verifying transcript...' : 'Not verified'}</span>
                     </div>
                   </div>
                   <button onclick="document.getElementById('apply-transcript-input').click()" class="text-[11px] font-bold text-fypilot-600 hover:text-fypilot-800 border border-fypilot-200 px-2 py-1 rounded-lg shrink-0 ml-1.5">Change</button>
                 </div>
+                ${f.transcript_verification ? `<div class="mt-2 text-left text-[10px] ${f.transcript_verification_status === 'passed' ? 'text-emerald-700' : 'text-rose-700'}">Semesters: ${f.transcript_verification.verification_result.evaluations.semesters_check.actual}/${f.transcript_verification.verification_result.evaluations.semesters_check.required}; credits by semester 6: ${f.transcript_verification.verification_result.evaluations.credit_hours_check.actual_at_semester_6}/${f.transcript_verification.verification_result.evaluations.credit_hours_check.required}</div>` : ''}
               ` : `
                 <button onclick="document.getElementById('apply-transcript-input').click()" class="mt-3 bg-white border border-gray-300 hover:border-indigo-500 text-gray-700 font-bold px-3 py-2 rounded-xl text-xs shadow-sm transition-all flex items-center gap-1.5 mx-auto">
                   <i class="fas fa-upload text-indigo-600"></i> Select Transcript PDF
@@ -7563,19 +7806,36 @@ function renderPublicApplicationPage() {
 
             <div class="space-y-2">
               ${f.members.map((m, idx) => `
-                <div class="flex flex-col md:flex-row items-stretch md:items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl p-2.5">
-                  <div class="flex items-center gap-2 flex-1 min-w-0">
+                <div class="flex flex-col items-stretch gap-3 bg-gray-50 border border-gray-200 rounded-xl p-2.5">
+                  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 w-full">
+                    <div class="flex items-center gap-2 min-w-0">
                     <span class="w-6 h-6 rounded-full bg-fypilot-100 text-fypilot-700 font-bold text-[10px] flex items-center justify-center shrink-0">${idx + 1}</span>
                     <input type="text" value="${escapeHtml(m.name)}" oninput="state.applyForm.members[${idx}].name = this.value" placeholder="Member Name *" class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:ring-1 focus:ring-fypilot-500 focus:outline-none" />
                   </div>
-                  <div class="flex items-center gap-2 flex-1 min-w-0">
+                    <div class="flex items-center gap-2 min-w-0">
                     <input type="text" value="${escapeHtml(m.student_id_num)}" oninput="state.applyForm.members[${idx}].student_id_num = this.value" placeholder="Student ID (CSC-21F-xxx) *" class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-xs font-mono focus:ring-1 focus:ring-fypilot-500 focus:outline-none" />
                   </div>
-                  <div class="flex items-center gap-2 flex-1 min-w-0">
+                    <div class="flex items-center gap-2 min-w-0">
                     <input type="email" value="${escapeHtml(m.email || '')}" oninput="state.applyForm.members[${idx}].email = this.value" placeholder="Email (optional, auto-derived)" class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:ring-1 focus:ring-fypilot-500 focus:outline-none" />
                     ${f.members.length > 1 ? `
                       <button onclick="removeApplyMember(${idx})" title="Remove Member" class="p-1.5 text-gray-400 hover:text-rose-600 shrink-0"><i class="fas fa-trash-alt text-xs"></i></button>
                     ` : ''}
+                  </div>
+                  </div>
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full">
+                    <div class="flex items-center gap-2 min-w-0">
+                      <input type="file" id="apply-member-${idx}-internship" accept="application/pdf,.pdf" class="hidden" onchange="handleApplyMemberPdfPick(event, ${idx}, 'internship')" />
+                      <button type="button" onclick="document.getElementById('apply-member-${idx}-internship').click()" class="text-[10px] font-bold border ${m.internship_certificate ? 'border-emerald-300 text-emerald-700 bg-emerald-50' : 'border-gray-300 text-gray-700 bg-white'} rounded-lg px-2.5 py-2 w-full truncate">
+                        <i class="fas ${m.internship_certificate ? 'fa-check-circle' : 'fa-upload'} mr-1"></i>${m.internship_certificate ? escapeHtml(m.internship_filename || 'Internship PDF added') : 'Upload internship letter *'}
+                      </button>
+                    </div>
+                    <div class="flex items-center gap-2 min-w-0">
+                      <input type="file" id="apply-member-${idx}-transcript" accept="application/pdf,.pdf" class="hidden" onchange="handleApplyMemberPdfPick(event, ${idx}, 'transcript')" />
+                      <button type="button" onclick="document.getElementById('apply-member-${idx}-transcript').click()" class="text-[10px] font-bold border ${m.transcript_verification_status === 'passed' ? 'border-emerald-300 text-emerald-700 bg-emerald-50' : m.transcript_verification_status === 'failed' ? 'border-rose-300 text-rose-700 bg-rose-50' : 'border-gray-300 text-gray-700 bg-white'} rounded-lg px-2.5 py-2 w-full truncate">
+                        <i class="fas ${m.transcript_verification_status === 'passed' ? 'fa-check-circle' : 'fa-upload'} mr-1"></i>${m.transcript_certificate ? `${escapeHtml(m.transcript_filename || 'Transcript PDF')} · ${m.transcript_verification_status === 'checking' ? 'Checking...' : m.transcript_verification_status === 'passed' ? 'Eligible' : m.transcript_verification_status === 'failed' ? 'Not eligible' : 'Not verified'}` : 'Upload transcript *'}
+                      </button>
+                    </div>
+                    ${m.transcript_verification ? `<p class="sm:col-span-2 text-[10px] ${m.transcript_verification_status === 'passed' ? 'text-emerald-700' : 'text-rose-700'}">Semesters: ${m.transcript_verification.verification_result.evaluations.semesters_check.actual}/${m.transcript_verification.verification_result.evaluations.semesters_check.required}; credits by semester 6: ${m.transcript_verification.verification_result.evaluations.credit_hours_check.actual_at_semester_6}/${m.transcript_verification.verification_result.evaluations.credit_hours_check.required}</p>` : ''}
                   </div>
                 </div>
               `).join('')}
@@ -7762,6 +8022,18 @@ async function submitPublicApplication() {
   }
 
   const f = state.applyForm;
+  if (f.transcript_verification_status !== 'passed') {
+    showToast('Your transcript must pass verification before submitting', 'error');
+    return;
+  }
+  for (const [index, member] of f.members.entries()) {
+    const hasDetails = [member.name, member.student_id_num, member.email].some(value => String(value || '').trim());
+    if (!hasDetails) continue;
+    if (!String(member.name || '').trim() || !String(member.student_id_num || '').trim() || !member.internship_certificate || !member.transcript_certificate || member.transcript_verification_status !== 'passed') {
+      showToast(`Member ${index + 1}: complete the details and upload eligible internship and transcript PDFs`, 'error');
+      return;
+    }
+  }
 
   // Send payload with both parameter keys for complete backend compatibility
   const payload = {
@@ -7796,7 +8068,8 @@ async function submitPublicApplication() {
     transcript_certificate: f.transcript_certificate_pdf,
     transcript_certificate_pdf: f.transcript_certificate_pdf,
     transcript_filename: f.transcript_pdf_name,
-    transcript_pdf_name: f.transcript_pdf_name
+    transcript_pdf_name: f.transcript_pdf_name,
+    transcript_text: f.transcript_text
   };
 
   try {
@@ -8064,7 +8337,7 @@ async function showReviewApplicationModal(id) {
         <div class="border-t pt-3">
           <h4 class="text-xs font-bold text-gray-700 mb-2">Group Team Members (${members.length})</h4>
           <div class="space-y-1.5">
-            ${members.map(m => `<div class="text-xs bg-gray-50 border border-gray-200 p-2.5 rounded-xl flex flex-wrap justify-between items-center gap-1"><span class="font-semibold text-gray-800 break-words">${escapeHtml(m.name || m.student_name)}</span><span class="font-mono text-gray-500">${escapeHtml(m.student_id_num || m.student_id)}</span></div>`).join('')}
+            ${members.map(m => `<div class="text-xs bg-gray-50 border border-gray-200 p-2.5 rounded-xl space-y-2"><div class="flex flex-wrap justify-between items-center gap-1"><span class="font-semibold text-gray-800 break-words">${escapeHtml(m.name || m.student_name)}</span><span class="font-mono text-gray-500">${escapeHtml(m.student_id_num || m.student_id)}</span></div><div class="flex flex-wrap gap-2">${m.internship_certificate ? `<a href="${m.internship_certificate}" target="_blank" rel="noopener noreferrer" class="text-[10px] font-bold text-fypilot-700 underline">Open internship letter</a>` : '<span class="text-[10px] text-rose-700">Internship letter missing</span>'}${m.transcript_certificate ? `<a href="${m.transcript_certificate}" target="_blank" rel="noopener noreferrer" class="text-[10px] font-bold text-indigo-700 underline">Open transcript</a>` : '<span class="text-[10px] text-rose-700">Transcript missing</span>'}<span class="text-[10px] font-bold ${m.transcript_verification?.verification_result?.is_eligible ? 'text-emerald-700' : 'text-rose-700'}">${m.transcript_verification?.verification_result?.is_eligible ? 'Transcript eligible' : 'Transcript not verified'}</span></div></div>`).join('')}
           </div>
         </div>
       ` : ''}
@@ -8802,6 +9075,7 @@ window.setApplyStep = setApplyStep;
 window.addApplyMember = addApplyMember;
 window.removeApplyMember = removeApplyMember;
 window.handleApplicationPdfPick = handleApplicationPdfPick;
+window.handleApplyMemberPdfPick = handleApplyMemberPdfPick;
 window.submitPublicApplication = submitPublicApplication;
 window.loadApplications = loadApplications;
 window.renderApplicationsList = renderApplicationsList;

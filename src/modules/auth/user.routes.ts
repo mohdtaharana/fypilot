@@ -13,10 +13,16 @@ import {
 } from '../../utils/session';
 import { createNotification, notifyRole } from '../notifications/notification.routes';
 import { logAuditEvent } from '../audit/audit.routes';
+import { ensureUserDocumentColumns, isPdfDataUrl, validateMemberDocuments } from '../groups/member-docs';
 
 const userRoutes = new Hono<{ Bindings: Env }>();
 const EXECUTIVE_ROLES = new Set(['coordinator', 'hod', 'dean']);
 const isExecutiveRole = (role?: string | null) => !!role && EXECUTIVE_ROLES.has(role);
+
+userRoutes.use('*', async (c, next) => {
+  await ensureUserDocumentColumns(c.env.DB);
+  await next();
+});
 
 // DELETE /api/users/bulk — remove EVERY student account.
 // Supervisors and executive accounts are deliberately left untouched.
@@ -124,7 +130,7 @@ userRoutes.post('/login', async (c) => {
 
   // Look up the user by email or student ID
   const user = await c.env.DB.prepare(
-    'SELECT id, email, name, role, department, status, password, avatar FROM users WHERE LOWER(email) = LOWER(?) OR LOWER(student_id_num) = LOWER(?)'
+    'SELECT id, email, name, role, department, status, password, avatar, internship_certificate, internship_filename, transcript_certificate, transcript_filename FROM users WHERE LOWER(email) = LOWER(?) OR LOWER(student_id_num) = LOWER(?)'
   ).bind(normalizedUsername, normalizedUsername).first() as Record<string, unknown> | null;
 
   if (user) {
@@ -334,10 +340,60 @@ userRoutes.get('/supervisors/stats', async (c) => {
 userRoutes.get('/:id', async (c) => {
   const id = c.req.param('id');
   const user = await c.env.DB.prepare(
-    'SELECT id, email, name, role, department, expertise, research_areas, max_students, status, created_at, avatar FROM users WHERE id = ?'
+    'SELECT id, email, name, role, department, expertise, research_areas, max_students, status, created_at, avatar, internship_certificate, internship_filename, transcript_certificate, transcript_filename FROM users WHERE id = ?'
   ).bind(id).first();
   if (!user) return c.json({ success: false, error: 'User not found' }, 404);
   return c.json({ success: true, data: user });
+});
+
+// PUT /api/users/:id/documents — upload internship letter + transcript for student profile
+userRoutes.put('/:id/documents', async (c) => {
+  const id = c.req.param('id');
+  const userId = c.req.header('X-User-Id') || 'demo-user';
+  if (userId !== id) {
+    return c.json({ success: false, error: 'You can only update your own uploaded documents' }, 403);
+  }
+
+  const body = await c.req.json();
+  const internshipCertificate = typeof body.internship_certificate === 'string' ? body.internship_certificate.trim() : null;
+  const transcriptCertificate = typeof body.transcript_certificate === 'string' ? body.transcript_certificate.trim() : null;
+  const internshipFilename = typeof body.internship_filename === 'string' && body.internship_filename.trim() ? body.internship_filename.trim() : 'internship_letter.pdf';
+  const transcriptFilename = typeof body.transcript_filename === 'string' && body.transcript_filename.trim() ? body.transcript_filename.trim() : 'transcript.pdf';
+
+  if (!internshipCertificate || !isPdfDataUrl(internshipCertificate)) {
+    return c.json({ success: false, error: 'Internship letter must be a valid PDF upload.' }, 400);
+  }
+
+  const transcriptValidation = await validateMemberDocuments({
+    internship_certificate: internshipCertificate,
+    transcript_certificate: transcriptCertificate,
+    transcript_text: body.transcript_text || body.transcript_content || null,
+  });
+
+  if (!transcriptValidation.ok) {
+    return c.json({ success: false, error: transcriptValidation.error }, 400);
+  }
+
+  if (!transcriptCertificate || !isPdfDataUrl(transcriptCertificate)) {
+    return c.json({ success: false, error: 'Academic transcript must be a valid PDF upload.' }, 400);
+  }
+
+  await c.env.DB.prepare(
+    `UPDATE users SET internship_certificate = ?, internship_filename = ?, transcript_certificate = ?, transcript_filename = ?, updated_at = datetime('now') WHERE id = ?`
+  ).bind(internshipCertificate, internshipFilename, transcriptCertificate, transcriptFilename, id).run();
+
+  const user = await c.env.DB.prepare(
+    'SELECT id, email, name, role, department, student_id_num, program, shift, status, avatar, internship_certificate, internship_filename, transcript_certificate, transcript_filename FROM users WHERE id = ?'
+  ).bind(id).first();
+
+  await logAuditEvent(c.env.DB, userId, c.req.header('X-User-Role') || 'student', 'user_documents_updated', {
+    entityType: 'user',
+    entityId: String(id),
+    details: `Uploaded internship and transcript documents for ${user?.name || id}`,
+    metadata: { user_id: id }
+  });
+
+  return c.json({ success: true, data: user, message: 'Documents uploaded successfully.' });
 });
 
 // PUT /api/users/:id/avatar — upload profile photo (base64 data URL)
@@ -459,7 +515,7 @@ userRoutes.put('/:id', async (c) => {
   }
 
   const user = await c.env.DB.prepare(
-    'SELECT id, email, name, role, department, student_id_num, program, shift, status, avatar FROM users WHERE id = ?'
+    'SELECT id, email, name, role, department, student_id_num, program, shift, status, avatar, internship_certificate, internship_filename, transcript_certificate, transcript_filename FROM users WHERE id = ?'
   ).bind(id).first();
   await logAuditEvent(c.env.DB, userId, userRole, 'user_updated', {
     entityType: 'user',
@@ -474,7 +530,7 @@ userRoutes.put('/:id', async (c) => {
 userRoutes.get('/:id/student-profile', async (c) => {
   const id = c.req.param('id');
   const user = await c.env.DB.prepare(
-    'SELECT id, email, name, role, department, student_id_num, program, shift, status, avatar, created_at FROM users WHERE id = ?'
+    'SELECT id, email, name, role, department, student_id_num, program, shift, status, avatar, internship_certificate, internship_filename, transcript_certificate, transcript_filename, created_at FROM users WHERE id = ?'
   ).bind(id).first();
 
   if (!user) return c.json({ success: false, error: 'Student not found' }, 404);

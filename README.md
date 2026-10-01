@@ -12,7 +12,7 @@ Repository: [https://github.com/mohdtaharana/fypilot](https://github.com/mohdtah
 | Layer | Technology |
 |---|---|
 | **Backend Runtime** | **Hono v4** (TypeScript) running on **Cloudflare Pages / Workers (workerd)** |
-| **Database** | **Cloudflare D1** (Serverless Distributed SQLite) with native SQL migrations (0001–0023) |
+| **Database** | **Cloudflare D1** (Serverless Distributed SQLite) with native SQL migrations (0001–0024) |
 | **AI Intelligence Layer** | **OpenRouter API** powering **Google Gemma 4 26B** (`google/gemma-4-26b-a4b-it:free`) with hybrid deterministic algorithms |
 | **Frontend UI** | Modern Vanilla **JavaScript SPA**, **Tailwind CSS**, **Chart.js**, **FontAwesome** |
 | **QR Code Generation** | **QRCode.js** client-side IIFE bundle (`public/static/vendor/qrcode.min.js`) |
@@ -184,11 +184,13 @@ The database is built on **Cloudflare D1** (distributed SQLite) utilizing strict
 0016_user_sessions                      - Server-backed sessions and authentication cookies
 0017_unique_student_id_num              - Unique student ID constraint enforcement
 0018_fyp_evaluations                    - Comprehensive FYP evaluation table and group tokens
+0018_member_document_fields            - Student document storage for internship/transcript uploads
 0019_evaluation_form_metadata           - Examiner credentials, degree, and presentation date
 0020_evaluation_raw_score               - Raw scoring and weighted total preservation
 0021_rescale_legacy_evaluation_totals   - Scoring formula normalization
 0022_evaluation_plain_totals            - Plain total mark calculations
 0023_fyp_evaluations_token_not_unique   - Multi-examiner evaluation support per group token
+0024_application_transcript_text       - Transcript text persistence for transcript verification
 ```
 
 ### Key Database Tables
@@ -351,15 +353,20 @@ All backend API routes are mounted under `/api/*` in `src/index.tsx`:
 
 5. **Build and run locally:**
    ```bash
+   # Start Vite dev mode for local app development
+   npm run dev
+
    # Build worker bundle
    npm run build
 
-   # Run local Workerd development server on port 3000
+   # Run local Workerd preview on port 3000
    npm run preview
    ```
 
 6. **Access the application:**
-   Open [http://localhost:3000](http://localhost:3000) in your browser.
+   Open the Vite app in your browser, or preview via [http://localhost:3000](http://localhost:3000) after running `npm run preview`.
+
+> Note: when using older local D1 databases, the app now auto-adds missing application columns such as `transcript_text` before inserts to keep the system compatible with earlier schema states.
 
 ---
 

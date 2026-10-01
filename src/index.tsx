@@ -142,7 +142,13 @@ function getIndexHTML(): string {
 <body class="bg-gray-50 min-h-screen">
   <div id="app"></div>
   <div id="toast-container" class="fixed bottom-4 right-4 z-[99999] pointer-events-none"></div>
-  <script src="/static/app.js?v=20260929-qrpanel"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    if (window.pdfjsLib) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+  </script>
+  <script src="/static/app.js?v=20261001-client-pdf-text"></script>
 </body>
 </html>`;
 }

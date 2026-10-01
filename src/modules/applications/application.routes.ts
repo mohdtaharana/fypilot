@@ -4,6 +4,8 @@ import { generateId } from '../ai/ai.utils';
 import { logAuditEvent } from '../audit/audit.routes';
 import { requireBulkDeleteRole } from '../../utils/bulk-guard';
 import { createNotification, notifyRole } from '../notifications/notification.routes';
+import { extractTranscriptText, verifyTranscriptEligibility } from './transcript-verifier';
+import { ensureUserDocumentColumns, isPdfDataUrl } from '../groups/member-docs';
 import {
   sendEmail,
   resolveAppUrl,
@@ -24,8 +26,8 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
  * not persisted or emailed. Any partially filled row is rejected loudly, since
  * a member without an email can never be notified.
  */
-function normalizeSubmittedMembers(raw: unknown): { members: Array<{ name: string; student_id_num: string; email: string }>; error?: string } {
-  const members: Array<{ name: string; student_id_num: string; email: string }> = [];
+function normalizeSubmittedMembers(raw: unknown): { members: Array<Record<string, any>>; error?: string } {
+  const members: Array<Record<string, any>> = [];
   if (raw === undefined || raw === null) return { members };
   if (!Array.isArray(raw)) return { members, error: 'Group members must be a list' };
 
@@ -47,7 +49,16 @@ function normalizeSubmittedMembers(raw: unknown): { members: Array<{ name: strin
     if (!resolvedEmail) return { members, error: `${label}: Email is required so the member can be notified` };
     if (!EMAIL_RE.test(resolvedEmail)) return { members, error: `${label}: "${resolvedEmail}" is not a valid email address` };
 
-    members.push({ name, student_id_num: studentIdNum, email: resolvedEmail });
+    members.push({
+      name,
+      student_id_num: studentIdNum,
+      email: resolvedEmail,
+      internship_certificate: m.internship_certificate || m.internship_certificate_pdf || null,
+      internship_filename: m.internship_filename || m.internship_pdf_name || 'internship_letter.pdf',
+      transcript_certificate: m.transcript_certificate || m.transcript_certificate_pdf || null,
+      transcript_filename: m.transcript_filename || m.transcript_pdf_name || 'transcript.pdf',
+      transcript_text: String(m.transcript_text || '').trim(),
+    });
   }
 
   if (members.length > 3) {
@@ -84,7 +95,38 @@ async function cleanupBrokenApprovalReferences(db: Env['DB']) {
   }
 }
 
+async function ensureApplicationColumns(db: Env['DB']) {
+  try {
+    const result = await db.prepare('PRAGMA table_info(student_applications)').all();
+    const columns = new Set((result?.results || []).map((row: any) => String(row.name)));
+    const required = [
+      'transcript_certificate',
+      'transcript_filename',
+      'transcript_text',
+      'abstract',
+      'problem_statement',
+      'objectives',
+      'methodology',
+      'technologies',
+    ];
+
+    for (const column of required) {
+      if (!columns.has(column)) {
+        await db.prepare(`ALTER TABLE student_applications ADD COLUMN ${column} TEXT`).run();
+      }
+    }
+  } catch (e) {
+    console.warn('ensureApplicationColumns failed:', e);
+  }
+}
+
 const applicationRoutes = new Hono<{ Bindings: Env }>();
+
+applicationRoutes.use('*', async (c, next) => {
+  await ensureUserDocumentColumns(c.env.DB);
+  await ensureApplicationColumns(c.env.DB);
+  await next();
+});
 
 const VALID_DEPARTMENTS = [
   'Business Administration',
@@ -261,6 +303,43 @@ applicationRoutes.post('/', async (c) => {
       return c.json({ success: false, error: membersError }, 400);
     }
 
+    const leaderTranscriptText = String(body.transcript_text || '').trim() || await extractTranscriptText(transcript_certificate);
+    if (!leaderTranscriptText.trim()) {
+      return c.json({ success: false, error: 'Your transcript text could not be read. Upload a searchable PDF transcript, not a scanned or password-protected PDF.' }, 400);
+    }
+    const leaderTranscriptResult = verifyTranscriptEligibility(leaderTranscriptText);
+    if (!leaderTranscriptResult.verification_result.is_eligible) {
+      return c.json({
+        success: false,
+        error: `Your transcript is not eligible: ${leaderTranscriptResult.verification_result.rejection_reasons.join(' ')}`,
+        transcript_verification: leaderTranscriptResult,
+      }, 400);
+    }
+
+    for (const [index, member] of validatedMembers.entries()) {
+      const label = `Group member ${index + 1}`;
+      if (!isPdfDataUrl(member.internship_certificate)) {
+        return c.json({ success: false, error: `${label}: Internship letter PDF is required.` }, 400);
+      }
+      if (!isPdfDataUrl(member.transcript_certificate)) {
+        return c.json({ success: false, error: `${label}: Transcript PDF is required.` }, 400);
+      }
+
+      const memberTranscriptText = String(member.transcript_text || '').trim() || await extractTranscriptText(member.transcript_certificate);
+      if (!memberTranscriptText.trim()) {
+        return c.json({ success: false, error: `${label}: transcript text could not be read. Upload a searchable PDF transcript.` }, 400);
+      }
+      const memberTranscriptResult = verifyTranscriptEligibility(memberTranscriptText);
+      member.transcript_verification = memberTranscriptResult;
+      if (!memberTranscriptResult.verification_result.is_eligible) {
+        return c.json({
+          success: false,
+          error: `${label} transcript is not eligible: ${memberTranscriptResult.verification_result.rejection_reasons.join(' ')}`,
+          transcript_verification: memberTranscriptResult,
+        }, 400);
+      }
+    }
+
     // 10. Check uniqueness of email and student_id_num
     const existingEmailApp = await c.env.DB.prepare(
       'SELECT id FROM student_applications WHERE email = ? AND status != "rejected"'
@@ -344,10 +423,11 @@ applicationRoutes.post('/', async (c) => {
       `INSERT INTO student_applications (
         id, email, student_id_num, student_name, program, shift, department,
         internship_certificate, internship_filename, transcript_certificate, transcript_filename,
+        transcript_text,
         group_name, project_title, abstract, problem_statement, objectives, methodology, technologies,
         group_members, supervisor_preference_1, supervisor_preference_2, supervisor_preference_3,
         supervisor_priority, admin_notes, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       appId,
       email.toLowerCase().trim(),
@@ -360,6 +440,7 @@ applicationRoutes.post('/', async (c) => {
       internship_filename,
       transcript_certificate,
       transcript_filename,
+      leaderTranscriptText,
       group_name,
       project_title,
       abstract || null,
@@ -530,6 +611,41 @@ applicationRoutes.delete('/bulk', async (c) => {
   }
 });
 
+// POST /api/applications/verify-transcript
+applicationRoutes.post('/verify-transcript', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const rawText = typeof body?.raw_text === 'string' ? body.raw_text : typeof body?.transcript_text === 'string' ? body.transcript_text : '';
+    const transcriptInput = body?.transcript_data_url || body?.transcript || body?.transcript_text || body?.transcriptDataUrl || body?.dataUrl || null;
+
+    if (!rawText.trim() && !transcriptInput) {
+      return c.json({
+        success: false,
+        error: 'Transcript content is required.'
+      }, 400);
+    }
+
+    const extractedText = rawText.trim() || await extractTranscriptText(String(transcriptInput));
+    if (!extractedText.trim()) {
+      return c.json({
+        success: false,
+        error: 'Transcript text could not be read. The PDF may be scanned, image-only, or password-protected; upload a searchable transcript PDF.',
+      }, 400);
+    }
+    const result = verifyTranscriptEligibility(extractedText);
+
+    return c.json({
+      success: true,
+      data: result,
+    });
+  } catch (error: any) {
+    return c.json({
+      success: false,
+      error: error?.message || 'Failed to verify transcript eligibility.'
+    }, 500);
+  }
+});
+
 // GET /api/applications — List applications for Admin / Coordinator
 applicationRoutes.get('/', async (c) => {
   const userRole = c.req.header('X-User-Role');
@@ -599,6 +715,35 @@ applicationRoutes.put('/:id/status', async (c) => {
     }
 
     if (status === 'approved') {
+      if (!isPdfDataUrl(app.internship_certificate) || !isPdfDataUrl(app.transcript_certificate)) {
+        return c.json({ success: false, error: 'Leader internship letter and transcript PDFs are required before approval.' }, 400);
+      }
+      const leaderTranscriptText = String(app.transcript_text || '').trim() || await extractTranscriptText(app.transcript_certificate);
+      const leaderTranscriptResult = verifyTranscriptEligibility(leaderTranscriptText);
+      if (!leaderTranscriptResult.verification_result.is_eligible) {
+        return c.json({ success: false, error: `Leader transcript is not eligible: ${leaderTranscriptResult.verification_result.rejection_reasons.join(' ')}` }, 400);
+      }
+
+      let approvalMembers: Array<Record<string, any>> = [];
+      try {
+        approvalMembers = typeof app.group_members === 'string' ? JSON.parse(app.group_members) : (app.group_members || []);
+      } catch {
+        return c.json({ success: false, error: 'Group member data is invalid. Request a corrected registration.' }, 400);
+      }
+      if (!Array.isArray(approvalMembers)) {
+        return c.json({ success: false, error: 'Group member data is invalid. Request a corrected registration.' }, 400);
+      }
+      for (const [index, member] of approvalMembers.entries()) {
+        if (!isPdfDataUrl(member.internship_certificate) || !isPdfDataUrl(member.transcript_certificate)) {
+          return c.json({ success: false, error: `Group member ${index + 1} is missing an internship letter or transcript PDF.` }, 400);
+        }
+        const memberTranscriptText = String(member.transcript_text || '').trim() || await extractTranscriptText(member.transcript_certificate);
+        const memberTranscriptResult = verifyTranscriptEligibility(memberTranscriptText);
+        if (!memberTranscriptResult.verification_result.is_eligible) {
+          return c.json({ success: false, error: `Group member ${index + 1} transcript is not eligible: ${memberTranscriptResult.verification_result.rejection_reasons.join(' ')}` }, 400);
+        }
+      }
+
       await cleanupBrokenApprovalReferences(c.env.DB);
 
       // 1. Create Student User Account
@@ -624,14 +769,14 @@ applicationRoutes.put('/:id/status', async (c) => {
       if (existingUser) {
         studentId = existingUser.id as string;
         await c.env.DB.prepare(
-          `UPDATE users SET status = 'active', role = 'student', department = ?, student_id_num = ?, program = ?, shift = ?, password = COALESCE(password, ?) WHERE id = ?`
-        ).bind(app.department, app.student_id_num, app.program, app.shift, provisioned_password, studentId).run();
+          `UPDATE users SET status = 'active', role = 'student', department = ?, student_id_num = ?, program = ?, shift = ?, password = COALESCE(password, ?), internship_certificate = ?, internship_filename = ?, transcript_certificate = ?, transcript_filename = ? WHERE id = ?`
+        ).bind(app.department, app.student_id_num, app.program, app.shift, provisioned_password, app.internship_certificate, app.internship_filename, app.transcript_certificate, app.transcript_filename, studentId).run();
       } else {
         try {
           await c.env.DB.prepare(
-            `INSERT INTO users (id, email, name, role, department, student_id_num, program, shift, status, password)
-             VALUES (?, ?, ?, 'student', ?, ?, ?, ?, 'active', ?)`
-          ).bind(studentId, app.email, app.student_name, app.department, app.student_id_num, app.program, app.shift, provisioned_password).run();
+            `INSERT INTO users (id, email, name, role, department, student_id_num, program, shift, status, password, internship_certificate, internship_filename, transcript_certificate, transcript_filename)
+             VALUES (?, ?, ?, 'student', ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)`
+          ).bind(studentId, app.email, app.student_name, app.department, app.student_id_num, app.program, app.shift, provisioned_password, app.internship_certificate, app.internship_filename, app.transcript_certificate, app.transcript_filename).run();
         } catch (e) {
           // Unique index (0017) rejected a duplicate — re-resolve and reuse the owner.
           const msg = String((e as Error)?.message || e);
@@ -661,7 +806,7 @@ applicationRoutes.put('/:id/status', async (c) => {
       // Handle dynamic team members if specified
       if (app.group_members) {
         try {
-          const members = typeof app.group_members === 'string' ? JSON.parse(app.group_members) : app.group_members;
+          const members = approvalMembers;
           if (Array.isArray(members)) {
             for (const m of members) {
               const memIdNum = String(m.student_id_num || m.student_id || '').trim();
@@ -699,15 +844,16 @@ applicationRoutes.put('/:id/status', async (c) => {
                 // Keep an existing password — only default it when none is set.
                 await c.env.DB.prepare(
                   `UPDATE users SET status = 'active', role = 'student', department = ?,
-                     program = ?, shift = ?, password = COALESCE(password, ?)
+                     program = ?, shift = ?, password = COALESCE(password, ?), internship_certificate = ?,
+                     internship_filename = ?, transcript_certificate = ?, transcript_filename = ?
                    WHERE id = ?`
-                ).bind(app.department, app.program, app.shift, provisioned_password, memUserId).run();
+                ).bind(app.department, app.program, app.shift, provisioned_password, m.internship_certificate, m.internship_filename, m.transcript_certificate, m.transcript_filename, memUserId).run();
               } else {
                 memUserId = generateId();
                 await c.env.DB.prepare(
-                  `INSERT INTO users (id, email, name, role, department, student_id_num, program, shift, status, password)
-                   VALUES (?, ?, ?, 'student', ?, ?, ?, ?, 'active', ?)`
-                ).bind(memUserId, memEmail, memName, app.department, memIdNum, app.program, app.shift, provisioned_password).run();
+                  `INSERT INTO users (id, email, name, role, department, student_id_num, program, shift, status, password, internship_certificate, internship_filename, transcript_certificate, transcript_filename)
+                   VALUES (?, ?, ?, 'student', ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)`
+                ).bind(memUserId, memEmail, memName, app.department, memIdNum, app.program, app.shift, provisioned_password, m.internship_certificate, m.internship_filename, m.transcript_certificate, m.transcript_filename).run();
               }
 
               const inGroup = await c.env.DB.prepare('SELECT id FROM group_members WHERE group_id = ? AND user_id = ?').bind(groupId, memUserId).first();
